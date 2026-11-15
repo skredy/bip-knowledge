@@ -1,46 +1,86 @@
-# Validation de la version 0.1.0
+# Validation — bip-kb 0.3.0
 
-## Vérifications réalisées dans l'environnement Linux
+Vérifications réalisées le 15 novembre 2026 dans l'environnement Linux avec .NET SDK 10.0.404. Cette page distingue les mécanismes testés de la validation métier à effectuer avec Copilot sur le poste professionnel.
 
-- SDK .NET 10.0.404 téléchargé avec vérification SHA-512 depuis les métadonnées Microsoft.
-- Compilation et restauration des dépendances verrouillées.
-- Dernier résultat : **27 tests réussis, 1 test Copilot réel ignoré**, aucune défaillance.
-- Tests xUnit : extraction XLS/XLSX, Draw.io natif/compressé, SQL Server et SQL dynamique, C#, JSON, Markdown, pièces jointes image, ignores Git et liens symboliques.
-- Tests de persistance : incrémentalité, suppression, source inaccessible, reprise après interruption, absence de publication partielle, déduplication, reconstruction SQLite, export vers un second espace.
-- Tests d'arbitrage : contradiction/évolution, décisions concurrentes, conservation des décisions après réanalyse, réexamen après perte de preuves.
-- Tests des contrats : références inventées et JSON incorrect refusés, restrictions CLI, délai de processus, MCP en lecture seule, entrée d'ingestion sans type explicite et limites de taille des arguments sous Windows.
-- Création et installation du paquet .NET tool, puis parcours CLI complet sur un corpus SQL/C#/Markdown avec **un processus CLI simulé** : ingestion, recherche, question et dossier de contexte.
-- Requêtes HTTP réelles sur les vues recherche, ingestions, détail et arbitrages. POST sans jeton antiforgery refusé (400), POST avec jeton et cookie accepté, Host étranger refusé (400).
+## Suite automatisée
 
-## Vérification Copilot réelle : bloquée par le réseau
+**57 tests réussis, 1 test Copilot authentifié ignoré par défaut, aucune défaillance.** Dépendances restaurées avec `--locked-mode`, compilation, tests xUnit et paquet .NET tool Release.
 
-Copilot CLI **1.0.111** installé ; aide et options effectivement inspectées. La syntaxe des restrictions a été corrigée après un appel réel : `--deny-tool '*'` n'est pas une règle valide ; l'adaptateur utilise les catégories documentées et une liste d'outils vide.
+Couverture :
 
-Une tentative réelle atteint la vérification d'authentification mais échoue sur `https://api.github.com/copilot_internal/user`. Une requête HTTPS indépendante confirme le refus du tunnel par le proxy (403). Une variable d'authentification existe déjà ; cela ne suffit pas à établir sa validité ni l'accès au modèle. Aucun secret supplémentaire n'a été demandé ou enregistré.
+- XLS/XLSX, Draw.io natif/compressé, SQL Server et SQL dynamique, SQL UTF-16, C#, JSON, Markdown, pièces jointes image, ignores Git et liens symboliques.
+- Premier import guidé, confirmation/annulation, contexte JSON, refus non interactif sans contexte, exceptions par fichier et conservation du contexte au remappage.
+- Incrémentalité, réanalyse, suppression, source inaccessible, reprise après interruption, déduplication, absence de publication partielle et lectures pendant une analyse lente.
+- Contradiction/évolution, décisions concurrentes, préservation des décisions et état à réexaminer après changement des preuves.
+- Migration avec sauvegarde, identifiants conservés, reconstruction sans `.local/`, lots orphelins, corruption, import avec cache local et résolution explicite de conflits Git.
+- Recherche d'extraits sans assertions, paramètres/filtres SQL, pluriels français, domaines liés, glossaire, filtres de rôle et isolement des projets.
+- Dossiers persistants, cycles de recherche, références inventées refusées, questions, déclarations confirmées retrouvables au-delà des cinq dernières et invalidation après nouvelle source.
+- Contrats JSON et processus réels utilisant des **exécutables simulés**, restrictions CLI, erreurs, timeout, MCP en lecture seule et limites portables des arguments.
 
-Il faut permettre l'accès à `api.github.com` dans l'environnement de validation et aux destinations Copilot requises par la configuration de l'entreprise, puis relancer `doctor --live`. Aucun changement réseau ou publication cloud n'a été effectué par cette implémentation.
+Commandes reproductibles :
 
-Le test `AuthenticatedCopilotCanIngestSqlAndAnswerWithCitations` reste explicitement ignoré par défaut. Pour l'exécuter sur un poste disposant de l'accès :
+```bash
+dotnet restore --locked-mode
+dotnet test --no-restore --logger "trx;LogFileName=tests.trx"
+dotnet pack src/BipKb -c Release --no-restore -o artifacts
+```
+
+## Parcours du paquet installé
+
+Le paquet 0.3.0 a été installé comme outil, puis utilisé sur trois sources distinctes : étude `.xls` de test, SQL cible avec procédure et filtre, code C#. **Copilot est simulé pour ce parcours** : aucune conclusion sur sa compréhension métier n'en découle.
+
+Parcours vérifié : `init`, profil global, `doctor`, ingestion sans type explicite et avec contexte, réingestion inchangée, recherche, contexte Markdown, création/reprise de dossier, conversation, réponse à une question, déclaration humaine, détection d'un dossier à actualiser, export, import dans un second espace, évaluation de recherche et appel MCP. Les huit outils MCP sont annoncés en lecture seule.
+
+Le premier import guidé a également été exécuté dans un pseudo-terminal pendant la réalisation ; les scénarios interactifs sont couverts par les tests à entrées injectées.
+
+## Interface web
+
+Tests dans Chromium avec Playwright sur l'application réellement lancée depuis le paquet :
+
+- Ouverture des six vues principales ; recherche et consultation des preuves.
+- Enregistrement d'un arbitrage, création d'un dossier, recherche avec réponse simulée.
+- Enregistrement d'une déclaration et réponse à une question.
+- Contenu HTML de déclaration affiché comme texte, sans exécution de script.
+- POST sans jeton antiforgery refusé avec 400 ; Host étranger refusé avec 400.
+- Aucune erreur JavaScript relevée dans les parcours exécutés.
+
+Il s'agit de l'interface locale Linux ; les IDE clients et Windows n'ont pas été exécutés ici.
+
+## Mesure de recherche locale
+
+Commande : `bip-kb benchmark --count 100000 --json`, paquet Release installé. Corpus synthétique de 100 000 extraits SQL, 30 recherches d'identifiants uniques, sans Copilot :
+
+| Mesure | Résultat observé |
+|---|---:|
+| Sauvegarde initiale et construction de l'index | 4,92 s |
+| Latence médiane à chaud | 17,2 ms |
+| Latence p95 à chaud | 27,4 ms |
+| Identifiants attendus retrouvés | 30 / 30 |
+
+La mesure précédente en Debug donnait 5,30 s de construction et 15,3 ms de p95. La charge de la machine fait varier ces chiffres ; ce sont des observations, pas un SLA. Le benchmark a permis de supprimer un parcours quadratique lors des insertions FTS. Le calcul des changements et le rafraîchissement des arêtes parcourent encore la mémoire complète lors d'une nouvelle révision.
+
+`evaluate` produit rappel dans les vingt premiers résultats, références manquantes/interdites et latences. Un petit cas du parcours installé et les tests de récupération passent. **Aucun score de pertinence métier sur votre corpus n'est encore établi.** Construire un jeu de questions avec les preuves attendues de votre migration pour cette mesure.
+
+## Copilot réel : blocage réseau constaté
+
+Copilot CLI **1.0.111** est installé. `doctor` inspecte effectivement son aide et détecte le mode non interactif ainsi que les pièces jointes. `doctor --live` a été retenté sur la 0.3.0 : échec du processus. Une requête HTTPS indépendante vers `api.github.com/copilot_internal/user` confirme un refus du tunnel par le proxy (403).
+
+Aucune compatibilité authentifiée, analyse visuelle ou qualité métier n'est annoncée comme validée. Aucun secret supplémentaire ni changement de politique réseau n'a été effectué. Les tests simulés vérifient le contrat et les parcours, pas la disponibilité ou la compréhension du modèle.
+
+## Validation sur votre poste
+
+1. Installer avec `scripts/install.ps1`. Pour une ancienne mémoire, lancer `migrate --dry-run`, puis `migrate` et `import`.
+2. Authentifier Copilot normalement et exécuter `scripts/validate.ps1 -Workspace <espace> -Live`.
+3. Lancer le test réel ; il couvre ingestion, réponse citée et contrat d'enquête :
 
 ```powershell
 $env:BIP_KB_LIVE_TESTS = '1'
 dotnet test --filter FullyQualifiedName~AuthenticatedCopilot
 ```
 
-```bash
-BIP_KB_LIVE_TESTS=1 dotnet test --filter FullyQualifiedName~AuthenticatedCopilot
-```
+4. Configurer votre profil et ingérer une étude Excel, le SQL cible et une implémentation représentative. Contrôler le contexte, les preuves, les rapprochements et les hypothèses.
+5. Tester Draw.io et image ; vérifier les relations visuelles et les limites annoncées.
+6. Préparer un endpoint dans un dossier, préciser une ambiguïté, confirmer une déclaration puis modifier une source : vérifier le réexamen et la reprise.
+7. Évaluer quelques questions métier avec des références attendues, puis tester le client MCP dans votre IDE.
 
-Les tests simulés ne valident ni la compréhension métier, ni la qualité visuelle, ni le fonctionnement d'une session Copilot autorisée.
-
-## À vérifier sur le poste professionnel
-
-1. Installer avec `scripts/install.ps1`, authentifier Copilot normalement et exécuter `scripts/validate.ps1 -Workspace <espace> -Live`.
-2. Lancer le test d'intégration réel ci-dessus.
-3. Ingestérer une étude Excel, le SQL cible et une implémentation représentative ; vérifier les références et le classement des apports.
-4. Ingestérer un Draw.io et une image lisible ; contrôler les entités et relations reconnues.
-5. Arbitrer un conflit, modifier sa source puis réingérer : la décision reste conservée et le changement des preuves est visible.
-6. Produire un dossier de contexte pour un endpoint réel ; juger s'il évite la reconstruction manuelle du contexte.
-7. Tester le client MCP dans l'IDE retenu. Le serveur est validé au niveau protocole local ; les trois IDE n'ont pas été exécutés dans cet environnement.
-
-Une CI Linux/Windows est fournie mais n'a pas été exécutée sur GitHub pendant cette tâche. Le script PowerShell n'a pas été exécuté sous Windows ici.
+La CI Linux/Windows est fournie ; son résultat après push doit être consulté sur GitHub. Le script PowerShell n'a pas été exécuté sous Windows dans cette session.

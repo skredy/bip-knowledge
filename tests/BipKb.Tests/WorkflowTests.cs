@@ -13,7 +13,7 @@ public sealed class Sandbox:IDisposable
     public string Source=>Path.Combine(Root,"source");
     public Sandbox()
     {
-        Directory.CreateDirectory(Source);Workspace=new(Path.Combine(Root,"kb"));Workspace.Init();Workspace.Bind("test",Source,SourceRole.Current);
+        Directory.CreateDirectory(Source);Workspace=new(Path.Combine(Root,"kb"));Workspace.Init();Workspace.Bind("test",Source,SourceRole.Current);Workspace.ConfigureSource("test",Source,Source,new(SourceRole.Current,new("iBip","Commandes","Règles et implémentation des commandes",SourceStatus.Observed)));
     }
     public string File(string name,string content) {var p=Path.Combine(Source,name);Directory.CreateDirectory(Path.GetDirectoryName(p)!);System.IO.File.WriteAllText(p,content);return p;}
     public void Dispose(){Directory.Delete(Root,true);}
@@ -126,7 +126,7 @@ public class WorkflowTests
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"ingest","arguments":{}}}
 """);var output=new StringWriter();await Mcp.Run(s.Workspace,input,output,default);
         var lines=output.ToString().Split('\n',StringSplitOptions.RemoveEmptyEntries);Assert.Equal(3,lines.Length);
-        using var list=JsonDocument.Parse(lines[1]);Assert.Equal(5,list.RootElement.GetProperty("result").GetProperty("tools").GetArrayLength());
+        using var list=JsonDocument.Parse(lines[1]);Assert.Equal(8,list.RootElement.GetProperty("result").GetProperty("tools").GetArrayLength());
         using var rejected=JsonDocument.Parse(lines[2]);Assert.True(rejected.RootElement.TryGetProperty("error",out _));
     }
     [UnixFact] public async Task ProcessTimeoutKillsChild()
@@ -137,7 +137,7 @@ public class WorkflowTests
     [Fact] public void BrokenGitMergeCannotBeImported()
     {
         using var s=new Sandbox();System.IO.File.WriteAllText(s.Workspace.StatePath,"<<<<<<< branch\n{}");
-        Assert.Throws<JsonException>(()=>new KnowledgeService(s.Workspace).Import());
+        Assert.ThrowsAny<JsonException>(()=>new KnowledgeService(s.Workspace).Import());
     }
     [Theory][InlineData(false)][InlineData(true)] public void ExcelCoordinatesArePreserved(bool modern)
     {

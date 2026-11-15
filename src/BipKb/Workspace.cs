@@ -15,7 +15,8 @@ public sealed class Workspace(string root)
         if (File.Exists(Path.Combine(Root, "bip.json"))) throw new InvalidOperationException("Workspace already initialized.");
         if (Directory.EnumerateFileSystemEntries(Root).Any()) throw new InvalidOperationException("Use an empty, dedicated knowledge directory.");
         Json.Write(Path.Combine(Root, "bip.json"), new Settings());
-        Json.Write(StatePath, new Knowledge());
+        Json.Write(StatePath, new {version=2});
+        new MemoryStore(this).Publish(new Knowledge());
         File.WriteAllText(Path.Combine(Root, ".gitignore"), ".local/\n*.tmp\n");
         Directory.CreateDirectory(Local);
     }
@@ -28,16 +29,23 @@ public sealed class Workspace(string root)
     public Knowledge Load()
     {
         if (!File.Exists(StatePath)) throw new InvalidOperationException("Run bip-kb init in a dedicated workspace first.");
-        var k = Json.Read<Knowledge>(File.ReadAllText(StatePath));
+        var content=File.ReadAllText(StatePath);
+        using var document=System.Text.Json.JsonDocument.Parse(content);
+        var version=document.RootElement.GetProperty("version").GetInt32();
+        var k=version==2?new MemoryStore(this).Load():Json.Read<Knowledge>(content);
         Validate(k); return k;
     }
     public static void Validate(Knowledge k)
     {
-        if (k.Version != 1) throw new InvalidDataException("Unsupported knowledge format.");
+        if (k.Version is not 1 and not 2) throw new InvalidDataException("Unsupported knowledge format.");
         static void Unique(IEnumerable<string> ids) { var a=ids.ToArray(); if(a.Distinct().Count()!=a.Length) throw new InvalidDataException("Duplicate identifiers."); }
         Unique(k.Claims.Select(x=>x.Id)); Unique(k.Evidence.Select(x=>x.Id)); Unique(k.Entities.Select(x=>x.Id)); Unique(k.Sources.Select(x=>x.Id));
+        Unique(k.Objects.Select(x=>x.Id));Unique(k.Relations.Select(x=>x.Id));Unique(k.Projects.Select(x=>x.Id));Unique(k.Tasks.Select(x=>x.Id));Unique(k.Questions.Select(x=>x.Id));
         var evidence=k.Evidence.Select(x=>x.Id).ToHashSet(); var entities=k.Entities.Select(x=>x.Id).ToHashSet(); var claims=k.Claims.Select(x=>x.Id).ToHashSet();
         if(k.Claims.Any(c=>!entities.Contains(c.EntityId)||c.EvidenceIds.Length==0||c.EvidenceIds.Any(e=>!evidence.Contains(e))||c.RelatedClaimIds.Any(r=>!claims.Contains(r)))) throw new InvalidDataException("Broken knowledge references.");
+        var endpoints=entities.Concat(claims).Concat(k.Objects.Select(x=>x.Id)).ToHashSet();
+        if(k.Relations.Any(r=>!endpoints.Contains(r.From)||!endpoints.Contains(r.To)||r.EvidenceIds.Any(e=>!evidence.Contains(e))))throw new InvalidDataException("Broken relation references.");
+        if(k.Objects.Any(o=>o.EvidenceIds.Any(e=>!evidence.Contains(e))))throw new InvalidDataException("Broken technical object evidence.");
         if(k.Sources.Any(s=>s.EvidenceIds.Any(e=>!evidence.Contains(e))||s.ClaimIds.Any(c=>!claims.Contains(c)))) throw new InvalidDataException("Broken source references.");
         if(k.Sources.Any(s=>Path.IsPathRooted(s.RelativePath)||s.RelativePath.Split('/').Contains(".."))) throw new InvalidDataException("Source paths must be relative.");
         if(k.Sources.Where(s=>s.Active).GroupBy(s=>(s.SourceId,s.RelativePath)).Any(g=>g.Count()>1)) throw new InvalidDataException("Conflicting active source versions; resolve the Git merge.");
@@ -46,7 +54,30 @@ public sealed class Workspace(string root)
     {
         Validate(k);
         k = k with { Sources=k.Sources.OrderBy(x=>x.Id).ToList(), Entities=k.Entities.OrderBy(x=>x.Id).ToList(), Evidence=k.Evidence.OrderBy(x=>x.Id).ToList(), Claims=k.Claims.OrderBy(x=>x.Id).ToList(), Reports=k.Reports.OrderBy(x=>x.Id).ToList() };
-        Json.Write(StatePath,k);
+        if(IsModern)new MemoryStore(this).Publish(k with{Version=2});else Json.Write(StatePath,k);
+    }
+    public bool IsModern
+    {
+        get { using var doc=System.Text.Json.JsonDocument.Parse(File.ReadAllText(StatePath));return doc.RootElement.GetProperty("version").GetInt32()==2; }
+    }
+    public string Revision => IsModern?new MemoryStore(this).Revision:Json.Hash(File.ReadAllText(StatePath));
+    public string SemanticRevision => Json.Hash(Revision+Json.Serialize(Decisions()));
+    public void EnsureWritable(){if(!IsModern)throw new InvalidOperationException("Run bip-kb migrate --dry-run, then bip-kb migrate before writing this legacy workspace.");}
+    public object Migrate(bool dryRun)
+    {
+        using var gate=Lock();
+        if(IsModern)return new{status="already migrated",revision=Revision};
+        var old=Load();var decisions=Decisions();
+        if(decisions.Any(d=>!old.Claims.Any(c=>c.Id==d.ClaimId)))throw new InvalidDataException("Orphan decision.");
+        var summary=new{status=dryRun?"preview":"migrated",entities=old.Entities.Count,claims=old.Claims.Count,evidence=old.Evidence.Count,unqualified=old.Claims.Count(c=>c.Context==null),decisions=decisions.Count};
+        if(dryRun)return summary;
+        var backup=Path.Combine(Local,"migration-backup");Directory.CreateDirectory(backup);
+        foreach(var file in new[]{StatePath,Path.Combine(Root,"bip.json")})if(!File.Exists(Path.Combine(backup,Path.GetFileName(file))))File.Copy(file,Path.Combine(backup,Path.GetFileName(file)));
+        if(Directory.Exists(Path.Combine(Root,"decisions")))foreach(var file in Directory.GetFiles(Path.Combine(Root,"decisions"),"*.json")){var dest=Path.Combine(backup,"decisions",Path.GetFileName(file));Directory.CreateDirectory(Path.GetDirectoryName(dest)!);if(!File.Exists(dest))File.Copy(file,dest);}
+        var k=old with{Version=2,Claims=old.Claims.Select(c=>c with{Origin=c.Contribution==Contribution.Hypothesis?KnowledgeOrigin.Inferred:KnowledgeOrigin.Extracted,State=c.Obsolete?KnowledgeState.Reexamine:KnowledgeState.Proposed}).ToList()};
+        new MemoryStore(this).Publish(k);var restored=new MemoryStore(this).Load();Validate(restored);
+        Json.Write(Path.Combine(backup,"id-map.json"),old.Claims.Select(c=>new{oldId=c.Id,newId=c.Id}).ToArray());
+        Json.Write(StatePath,new{version=2});return summary;
     }
     public List<Decision> Decisions()
     {
@@ -78,7 +109,7 @@ public sealed class Workspace(string root)
     public static bool Conflict(IEnumerable<Decision> decisions,string claim) => Effective(decisions,claim).Select(d=>d.Action).Distinct().Count()>1;
     public Decision Decide(string claimId,string action,string reason,string actor)
     {
-        using var gate=Lock(); var k=Load();
+        using var gate=Lock(); EnsureWritable();var k=Load();
         var claim=k.Claims.SingleOrDefault(c=>c.Id==claimId) ?? throw new ArgumentException("Unknown claim.");
         if(!Actions.Contains(action)||string.IsNullOrWhiteSpace(reason)||string.IsNullOrWhiteSpace(actor)||reason.Length>4000||actor.Length>200) throw new ArgumentException("Action, reason and actor are required.");
         if(action is "distinct" or "replace" && claim.RelatedClaimIds.Length==0) throw new ArgumentException("This action requires a related claim.");
@@ -100,38 +131,36 @@ public sealed class Workspace(string root)
         using var gate=Lock(); var config=Config; var existing=config.Sources.SingleOrDefault(s=>s.Id==id);
         if(existing==null&&role==null) throw new ArgumentException("New sources require --role legacy|target|current.");
         if(role==SourceRole.Unknown) throw new ArgumentException("Choose legacy, target or current.");
-        config.Sources.RemoveAll(s=>s.Id==id); config.Sources.Add(new(id,role??existing!.Role,existing?.ExcelSheets));
+        config.Sources.RemoveAll(s=>s.Id==id); config.Sources.Add(new(id,role??existing!.Role,existing?.ExcelSheets,existing?.Context,existing?.Overrides));
         Json.Write(Path.Combine(Root,"bip.json"),config with {Sources=config.Sources.OrderBy(s=>s.Id).ToList()});
         var bindings=Bindings(); bindings[id]=path; Json.Write(Path.Combine(Local,"bindings.json"),bindings);
     }
-    public SortedDictionary<string,string> Bindings() => File.Exists(Path.Combine(Local,"bindings.json"))?Json.Read<SortedDictionary<string,string>>(File.ReadAllText(Path.Combine(Local,"bindings.json"))):new();
-    public void Rebuild(Knowledge? knowledge=null)
+    public void ConfigureSource(string id,string root,string selectedPath,SourceDescriptor descriptor)
     {
-        var k=knowledge??Load(); Directory.CreateDirectory(Local);
-        using var db=OpenDb(); using var tx=db.BeginTransaction();
-        using var cmd=db.CreateCommand(); cmd.Transaction=tx;
-        cmd.CommandText="CREATE VIRTUAL TABLE IF NOT EXISTS claims USING fts5(id UNINDEXED, entity, statement, tokenize='unicode61 remove_diacritics 2'); DELETE FROM claims;"; cmd.ExecuteNonQuery();
-        foreach(var c in k.Claims.Where(c=>!c.Obsolete))
+        descriptor.Validate();
+        if(!Regex.IsMatch(id,"^[a-zA-Z0-9_-]+$"))throw new ArgumentException("Identifiant de source invalide.");
+        root=Path.GetFullPath(root);selectedPath=Path.GetFullPath(selectedPath);
+        if(!Directory.Exists(root)||!SourceSetup.Under(selectedPath,root))throw new ArgumentException("Chemin hors de la source.");
+        using var gate=Lock();var config=Config;var bindings=Bindings();
+        if(bindings.TryGetValue(id,out var bound)&&Path.GetFullPath(bound)!=root)throw new ArgumentException("Source déjà liée ailleurs ; utilisez source bind pour la déplacer.");
+        var existing=config.Sources.SingleOrDefault(s=>s.Id==id)??new SourceDefinition(id,descriptor.Role);
+        var relative=Path.GetRelativePath(root,selectedPath).Replace('\\','/');
+        if(relative==".")existing=existing with{Role=descriptor.Role,Context=descriptor.Context};
+        else
         {
-            cmd.CommandText="INSERT INTO claims(id,entity,statement) VALUES($id,$entity,$text)"; cmd.Parameters.Clear();
-            cmd.Parameters.AddWithValue("$id",c.Id); cmd.Parameters.AddWithValue("$entity",k.Entities.Single(e=>e.Id==c.EntityId).Name); cmd.Parameters.AddWithValue("$text",c.Statement); cmd.ExecuteNonQuery();
+            var overrides=new SortedDictionary<string,SourceDescriptor>(existing.Overrides??new());
+            overrides[relative]=descriptor;existing=existing with{Overrides=overrides};
         }
-        tx.Commit(); File.WriteAllText(Path.Combine(Local,"index.hash"),Json.Hash(File.ReadAllText(StatePath)));
+        config.Sources.RemoveAll(s=>s.Id==id);config.Sources.Add(existing);
+        Json.Write(Path.Combine(Root,"bip.json"),config with{Sources=config.Sources.OrderBy(s=>s.Id).ToList()});
+        bindings[id]=root;Json.Write(Path.Combine(Local,"bindings.json"),bindings);
     }
-    private SqliteConnection OpenDb() { var db=new SqliteConnection(new SqliteConnectionStringBuilder{DataSource=Path.Combine(Local,"index.db"),Pooling=false}.ToString()); db.Open(); return db; }
+    public SortedDictionary<string,string> Bindings() => File.Exists(Path.Combine(Local,"bindings.json"))?Json.Read<SortedDictionary<string,string>>(File.ReadAllText(Path.Combine(Local,"bindings.json"))):new();
+    public void Rebuild(Knowledge? knowledge=null) => new SearchEngine(this).Refresh(true,knowledge);
     public List<Claim> Search(string query,int limit=30) => Query(query,limit).Claims;
     public (Knowledge Knowledge,List<Claim> Claims) Query(string query,int limit=30)
     {
-        using var gate=Lock(); var k=Load();
-        var hash=Path.Combine(Local,"index.hash");
-        if(!File.Exists(Path.Combine(Local,"index.db"))||!File.Exists(hash)||File.ReadAllText(hash)!=Json.Hash(File.ReadAllText(StatePath))) Rebuild(k);
-        var words=Regex.Matches(query,@"[\p{L}\p{N}_]+").Select(m=>"\""+m.Value+"\"").Distinct().Take(32).ToArray();
-        if(words.Length==0) return (k,[]);
-        using var db=OpenDb(); using var cmd=db.CreateCommand(); cmd.CommandText="SELECT id FROM claims WHERE claims MATCH $q ORDER BY rank LIMIT $n";
-        cmd.Parameters.AddWithValue("$q",string.Join(" OR ",words)); cmd.Parameters.AddWithValue("$n",Math.Clamp(limit,1,100));
-        using var reader=cmd.ExecuteReader(); var result=new List<Claim>();
-        var decisions=Decisions();
-        while(reader.Read()) { var c=k.Claims.Single(c=>c.Id==reader.GetString(0)); if(!Rejected(decisions,c.Id) && !k.Claims.Any(replacement=>!replacement.Obsolete&&replacement.RelatedClaimIds.Contains(c.Id)&&!Conflict(decisions,replacement.Id)&&Effective(decisions,replacement.Id).Any(d=>d.Action=="replace"))) result.Add(c); }
-        return (k,result);
+        var k=Load();var hits=new SearchEngine(this).Search(new(query,Limit:limit));var ids=hits.Hits.Select(h=>h.Id).ToHashSet();
+        return (k,k.Claims.Where(c=>ids.Contains(c.Id)).ToList());
     }
 }

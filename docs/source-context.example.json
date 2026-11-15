@@ -1,0 +1,10 @@
+{
+  "role": "target",
+  "context": {
+    "project": "Migration BIP",
+    "domain": "Facturation",
+    "description": "Étude de migration et MPD cible du module facturation.",
+    "status": "proposal",
+    "notes": "Le SQL décrit la cible ; les Excel expliquent les correspondances avec l'ancien système."
+  }
+}

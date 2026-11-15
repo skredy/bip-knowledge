@@ -14,7 +14,7 @@ namespace BipKb;
 
 public static class Extractor
 {
-    public const string Version="extractors-1";
+    public const string Version="extractors-2";
     public static readonly string[] Extensions=[".xls",".xlsx",".json",".cs",".csproj",".sql",".md",".txt",".drawio",".png",".jpg",".jpeg"];
     public static bool Supported(string path)=>Extensions.Contains(Path.GetExtension(path).ToLowerInvariant());
     public static bool IsImage(string path)=>new[]{".png",".jpg",".jpeg"}.Contains(Path.GetExtension(path).ToLowerInvariant());
@@ -94,7 +94,7 @@ public static class Extractor
             {
                 var text=content.Substring(offset,Math.Min(2000,content.Length-offset));
                 var loc=locator+(content.Length>2000?$"; chars {offset}-{offset+text.Length}":"");
-                units.Add(new(Json.Hash(loc+"\n"+text),loc,text));
+                units.Add(new(Json.Hash(loc+"\n"+text),loc,text,locator));
             }
         }
         var ext=Path.GetExtension(file).ToLowerInvariant();
@@ -106,13 +106,14 @@ public static class Extractor
             do
             {
                 if(excelSheets is {Length:>0} && !excelSheets.Contains(reader.Name))continue;
-                var row=0;
+                var row=0;string? headers=null;
                 while(reader.Read())
                 {
                     row++; var cells=new List<string>();
                     for(var col=0;col<reader.FieldCount;col++)
                         if(reader.GetValue(col) is {} value) cells.Add($"{Column(col)}{row}: {Convert.ToString(value,System.Globalization.CultureInfo.InvariantCulture)}");
-                    Add($"sheet:{reader.Name}; row:{row}",string.Join("\n",cells));
+                    if(row==1)headers=string.Join(" | ",cells);
+                    Add($"sheet:{reader.Name}; row:{row}",(row>1?"Headers: "+headers+"\n":"")+string.Join("\n",cells));
                 }
             }while(reader.NextResult());
         }

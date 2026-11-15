@@ -1,0 +1,19 @@
+{
+  "id": "bip-migration",
+  "name": "Migration BIP",
+  "objective": "Migrer les endpoints métier vers le MPD cible en conservant les règles validées.",
+  "architecture": ".NET, DTO et handlers CQRS ; abstractions techniques fournies par les packages NuGet du projet.",
+  "systems": ["Ancien système", "Application cible"],
+  "conventions": ["Utiliser les implémentations validées comme exemples", "Ne pas inventer les détails internes des NuGet"],
+  "domains": [
+    {"id": "facturation", "name": "Facturation", "responsibility": "Factures et règlements", "relatedDomains": ["tiers"]},
+    {"id": "tiers", "name": "Tiers", "responsibility": "Clients et fournisseurs", "relatedDomains": []}
+  ],
+  "authorities": [
+    {"sourceId": "mpd", "topic": "schema", "reason": "Structure cible validée"},
+    {"sourceId": "code-actuel", "topic": "runtime", "reason": "Comportement observé dans l'application"}
+  ],
+  "glossary": [
+    {"term": "facture impayée", "aliases": ["reste à payer", "unpaid invoice"], "definition": "Facture dont le solde reste dû ; exceptions à valider avec le métier.", "domain": "Facturation"}
+  ]
+}

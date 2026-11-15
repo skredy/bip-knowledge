@@ -1,33 +1,63 @@
-# Architecture et invariants
+# Architecture et invariants — bip-kb 0.3
 
-## Organisation
+## Composants
 
-`Domain` définit les types sérialisés, `Extractor` les lecteurs, `Ingestor` le pipeline, `Workspace` la persistance et FTS5, `CopilotAnalyzer` les processus CLI, `KnowledgeService` les exports et dossiers. Razor Pages et MCP utilisent les mêmes services.
+- `SourceSetup` : inventaire préalable, contexte guidé, confirmation et exceptions par chemin.
+- `Projects` : profil global explicite, domaines liés, glossaire, autorités par sujet et synthèse dérivée.
+- `Extractor` / `TechnicalExtraction` : unités documentaires et objets/relations SQL et C# observables.
+- `Ingestor` : empreintes, extraction, recherche des assertions proches, analyse, rapprochement et publication.
+- `MemoryStore` / `Workspace` : mémoire partagée, journal de changements, migration et décisions.
+- `SearchEngine` : index FTS5 des assertions **et des extraits originaux**, objets, entités et déclarations humaines.
+- `Research` : enquêtes bornées, conversations, questions, dossiers et fraîcheur.
+- `CopilotAnalyzer` : contrat JSON, processus non interactif, limites et annulation.
+- CLI, Razor Pages et MCP utilisent ces services communs. MCP reste strictement en lecture seule.
 
-Une mémoire contient des versions de sources, entités, assertions, preuves et rapports. Identifiants SHA-256 déterministes ; horodatage et identifiant unique pour les ingestions et décisions. Les références de fichiers sont `sourceId + relativePath`, indépendantes du poste.
+## Identité et provenance
 
-## Publication et reprise
+Une entité a une identité conservée lors de son renommage ; son ancien nom devient un alias. La clé initiale combine source, périmètre et nom qualifié. Les objets techniques utilisent leur nom qualifié et leur source ; un même nom dans deux sources ne constitue pas automatiquement une équivalence. Les projets/domaines ont des identifiants dans le profil, mais le contexte des sources référence encore leurs **noms** : les maintenir cohérents, ne pas les renommer comme une simple étiquette.
 
-Un verrou local exclusif protège l'ingestion, les décisions et la reconstruction d'index. L'ingestion travaille sur une copie mémoire, écrit les réponses validées dans `.local/staging`, puis remplace atomiquement `knowledge.json`. Le JSON fait autorité ; une panne avant le remplacement n'active aucun résultat partiel. Un index absent ou obsolète est reconstruit par recherche/import.
+Les assertions distinguent apport d'ingestion, origine (`extracted`, `inferred`, `declared`), état et conditions. Les décisions sont conservées séparément et déterminent l'état consultable. Une décision dont les preuves actives ont changé apparaît à réexaminer. Une source proposée n'est jamais promue automatiquement en exigence validée. Une déclaration humaine reste identifiable par son auteur et ne se transforme pas en preuve extraite.
 
-Le cache inclut le contenu, la configuration, le rôle, la version d'extracteur et le contexte fourni. Changer `analysisProfile` force la prise en compte d'un nouveau modèle ou prompt. `--reanalyze` contourne le cache. Une reprise ne réutilise une réponse qu'avec exactement la même demande.
+Les preuves portent source logique, chemin relatif, version, emplacement et extrait. Les unités conservent leur parent ; les lignes Excel incluent l'en-tête. Les objets techniques citent les unités de leur fichier : ce niveau de provenance ne constitue pas une résolution exacte des dépendances d'un projet entier. Les appels externes non résolus sont des inférences ; aucun MSBuild ou code source n'est exécuté.
 
-Les sources identiques ne déclenchent pas une confirmation indépendante. Une suppression n'est inférée qu'après inventaire complet de la racine liée, et absence réelle du fichier. Une source inaccessible ou un fichier simplement exclu ne provoque pas de suppression. Les preuves historiques sont conservées ; une assertion sans preuve active devient obsolète.
+## Mémoire partagée et publication
 
-Les décisions sont des fichiers immuables. Une nouvelle décision cite les décisions qu'elle remplace. Après fusion, des décisions terminales incompatibles restent visibles au lieu d'appliquer un ordre temporel arbitraire. La modification des preuves déclenche leur réexamen.
+`knowledge.json` est désormais un marqueur de format 2. `memory/objects/<empreinte>.json` contient un lot de mutations par identifiant. `memory/changes/<id>.json` indique ses parents, son empreinte et sa date. Le manifeste est publié atomiquement en dernier : un fichier de données isolé ne rend rien visible. Les fichiers immuables se partagent par Git ; SQLite et les chemins physiques restent sous `.local/`.
 
-## Contrat Copilot
+Le chargement vérifie les parents, cycles, empreintes et références. Deux écritures concurrentes différentes sur un même identifiant nécessitent une résolution explicite ; aucune date ne donne silencieusement priorité à l'une. Une résolution est validée avant publication. Les fichiers `decisions/` conservent leur propre chaîne de remplacement et leurs conflits d'arbitrage.
 
-Entrée : rôle, unités extraites, assertions proches, entités et décisions pertinentes. Sortie : tableau `findings` strict, avec entité, nature, assertion, apport, preuves, relations et incertitude. Les champs inconnus, références inventées, relations absentes et réponses malformées sont refusés.
+Un cache local matérialisé évite de rejouer tout le journal. Il suppose que les anciens lots sont immuables ; `import` invalide ce cache et vérifie leur intégrité. Ne pas éditer les lots à la main. Après une fusion Git, exécuter `import`.
 
-Chaque processus démarre dans un dossier de travail neuf hors des sources. Les données sont encodées en JSON dans le prompt. Pas de shell d'interprétation pour les arguments ; commandes système, écriture, lecture par outils, mémoire et URL sont refusées. La liste d'outils est vide ; les instructions du dépôt et MCP intégrés sont désactivés. Les pièces jointes sont copiées dans le dossier temporaire puis supprimées. Les mécanismes propres à une installation Copilot restent sous le contrôle de l'administrateur du poste.
+L'analyse distante ne garde pas le verrou d'écriture. Elle travaille à partir d'une révision et stocke ses résultats intermédiaires validés sous `.local/staging`. Le verrou est acquis uniquement pour publier ; un changement concurrent de mémoire/configuration interrompt cette publication. Relancer l'ingestion réutilise les réponses dont la demande est identique. La révision précédente reste consultable pendant l'analyse.
 
-Les unités sont découpées et les références proches bornées pour limiter chaque requête structurée à 18 000 caractères. Un contrôle supplémentaire borne les arguments encodés à 30 000 caractères, sous la limite de création de processus Windows.
+Le cache dépend du contenu, de l'extracteur, du profil d'analyse et du contexte effectif du fichier. Une modification de configuration d'une source indépendante ne force pas sa réanalyse. `--reanalyze` réévalue volontairement une source. Une source inaccessible n'est pas supprimée ; seules une inspection complète de sa racine et une absence confirmée rendent ses preuves historiques.
 
-Les codes transitoires 429/502/503/504 font l'objet de deux nouvelles tentatives maximum. Timeout et annulation tuent l'arbre du processus. Les erreurs du fournisseur ne sont pas réimprimées avec le contenu des documents ou des credentials. La limite de sortie est 2 Mo.
+## Index et recherche
 
-## Limites de confiance
+SQLite utilise WAL, FTS5, des index de périmètre et un graphe d'adjacence. Une révision déjà indexée n'entraîne aucun chargement du corpus pour une recherche CLI. Le rafraîchissement compare les empreintes des documents et ne réécrit que les lignes FTS modifiées. Les suppressions FTS passent par un `rowid` indexé : aucune recherche linéaire par identifiant pour chaque insertion.
 
-Les textes importés ne sont jamais des instructions fiables. Une validation JSON et une preuve existante empêchent les références inventées ; elles ne prouvent pas que le modèle a correctement interprété le contenu. Les interprétations incertaines restent des hypothèses. Les arbitrages humains sont transmis aux analyses et ne sont jamais écrasés par celles-ci.
+La recherche applique le projet avant de limiter les candidats, puis combine identifiants exacts, texte normalisé, quelques variantes de pluriel, glossaire et relations. La portée est bornée : 200 candidats lexicaux, 30 voisins par nœud, profondeur maximale de trois, vingt résultats par défaut. Les domaines liés sont explicites. La pertinence intègre domaine, validation humaine et autorité selon l'intention (`schema`, `runtime`, etc.). Les raisons de sélection et les preuves restent visibles. Un arbitrage `distinct` retire le rapprochement de la navigation.
 
-L'interface web est locale, sans mode multi-utilisateur : la possession de la session locale donne accès à la mémoire. Vérification du Host, absence de CORS permissif et antiforgery sur POST. Les sorties HTML sont encodées par Razor.
+Le rafraîchissement lit encore la mémoire matérialisée complète ; les tables d'arêtes et profils sont reconstruites à chaque révision. Le journal partage seulement les changements mais leur calcul parcourt aussi l'état complet. Ces coûts de publication ne sont pas ceux des recherches à chaud. Le benchmark documenté mesure un corpus synthétique et n'établit pas la qualité d'une recherche métier.
+
+## Enquêtes et mémoire humaine
+
+Une enquête charge le profil explicite, recherche, fournit un contexte borné à Copilot puis utilise ses demandes complémentaires. Elle s'arrête après le budget de cycles ou quand aucune recherche supplémentaire n'est proposée. Chaque étape conserve requête, résultats, identifiants effectivement transmis, empreinte de la demande et durée. La conversation n'est pas réingérée automatiquement.
+
+Les dossiers conservent réponses, références et questions ouvertes. Les réponses humaines nécessitent auteur et confirmation. Les déclarations deviennent recherchables par sujet, même lorsqu'elles ne font plus partie des dernières déclarations transmises comme contexte. La couverture indique seulement l'existence de **preuves candidates**. Aucun résultat ne démontre l'absence d'une règle.
+
+La fraîcheur dépend des sources, assertions, profil, décisions et déclarations du projet, ainsi que des relations. Cette invalidation est volontairement conservatrice : une nouvelle source peut rendre un dossier à actualiser même si ses anciennes citations existent toujours. Reprendre relance la recherche ; les réponses précédentes restent dans l'historique.
+
+## Contrat Copilot et limites de confiance
+
+Chaque processus démarre dans un dossier temporaire hors des sources. Données JSON et pièces jointes sont non fiables et ne constituent jamais des instructions. Pas de shell pour interpréter les arguments. Les commandes, écritures, lectures par outils, mémoire et URL sont refusées ; liste d'outils vide, instructions personnalisées et MCP intégrés désactivés. Aucun mode donnant toutes les permissions. Les fichiers temporaires sont supprimés après usage.
+
+Les unités et références sont bornées à 18 000 caractères de demande structurée ; les arguments encodés sont limités à 30 000 caractères pour Windows. Les sorties dépassant 2 Mo sont rejetées. Timeout/annulation terminent l'arbre du processus ; seules les erreurs transitoires 429/502/503/504 ont deux reprises maximum. Les sorties d'erreur du fournisseur ne sont pas réimprimées avec les documents ou secrets.
+
+La réponse JSON est strictement désérialisée et ses références validées contre les éléments fournis. Cela établit la provenance, pas la vérité métier ni la compréhension visuelle. Une image sans capacité de pièce jointe provoque une erreur explicite.
+
+L'interface écoute uniquement sur 127.0.0.1, vérifie le Host et utilise antiforgery sur les POST. Razor encode les contenus. Ce n'est pas un serveur multi-utilisateur ; le partage concerne les fichiers Git.
+
+## Migration
+
+`migrate --dry-run` inspecte une mémoire de format 1. `migrate` sauvegarde configuration, mémoire et décisions dans `.local/migration-backup`, conserve les identifiants historiques, publie et valide le nouveau journal, puis remplace le marqueur. L'opération est idempotente. Les anciennes sources sans contexte restent consultables, mais doivent être qualifiées avant nouvelle ingestion. Revenir en arrière consiste à restaurer la sauvegarde dans un dossier distinct avec l'ancien programme.

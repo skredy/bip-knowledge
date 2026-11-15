@@ -29,6 +29,22 @@ printf '%s\n' '{"findings":[{"entity":"Commande","kind":"rule","statement":"Comm
         Assert.Equal("Commande validée",Assert.Single(result.Findings).Statement);
         Assert.Empty(Directory.GetDirectories(Path.Combine(s.Workspace.Local,"copilot")));
     }
+    [UnixFact] public async Task ResearchProcessUsesStructuredCitationsAndCleansTemporaryDirectory()
+    {
+        using var s=new Sandbox();var script=Path.Combine(s.Root,"research-test");
+        File.WriteAllText(script,"""
+#!/bin/sh
+if [ "$1" = "--help" ]; then
+ echo '--prompt --silent --deny-tool --available-tools --disable-builtin-mcps --no-custom-instructions --no-auto-update --stream --no-color --no-ask-user'; exit 0
+fi
+printf '%s\n' '{"answer":"Une facture possède un statut [unit]","citations":["unit"],"nextQueries":[],"questions":[]}'
+""");
+        if(!OperatingSystem.IsWindows())File.SetUnixFileMode(script,UnixFileMode.UserRead|UnixFileMode.UserWrite|UnixFileMode.UserExecute);
+        Json.Write(Path.Combine(s.Workspace.Root,"bip.json"),s.Workspace.Config with{CopilotExecutable=script});
+        var hit=new SearchHit("unit","evidence","Statut","La facture possède un statut",null,null,null,["unit"],1,[],KnowledgeState.Proposed);
+        var result=await new CopilotAnalyzer(s.Workspace).Investigate(new("Statut",null,[hit],[],[],1),default);
+        Assert.Contains("unit",result.Citations);Assert.Empty(Directory.GetDirectories(Path.Combine(s.Workspace.Local,"copilot")));
+    }
     [LiveFact] public async Task AuthenticatedCopilotCanIngestSqlAndAnswerWithCitations()
     {
         using var s=new Sandbox();s.File("commande.sql","CREATE TABLE dbo.Commande(Id int PRIMARY KEY, Statut nvarchar(30));");
@@ -37,5 +53,8 @@ printf '%s\n' '{"findings":[{"entity":"Commande","kind":"rule","statement":"Comm
         Assert.NotEmpty(report.ClaimIds);var claims=s.Workspace.Search("Commande");Assert.NotEmpty(claims);
         var answer=await analyzer.Ask("Quelles colonnes possède Commande ?",claims.ToArray(),default);
         Assert.NotEmpty(answer.ClaimIds);Assert.Contains("Commande",new KnowledgeService(s.Workspace).Context("Commande"));
+        var hits=new SearchEngine(s.Workspace).Search(new("Commande")).Hits;
+        var research=await analyzer.Investigate(new("Quelles colonnes possède Commande ?",null,hits,[],Research.Coverage(hits),1),default);
+        Assert.NotEmpty(research.Citations);
     }
 }

@@ -1,0 +1,109 @@
+using System.Text;
+namespace BipKb;
+
+public sealed class Research(Workspace workspace,IResearchAssistant assistant)
+{
+    public WorkTask Start(string goal,string? project)
+    {
+        if(string.IsNullOrWhiteSpace(goal)||goal.Length>4000)throw new ArgumentException("A task goal is required (maximum 4000 characters).");
+        var profile=new Projects(workspace).Find(project)??throw new ArgumentException("Set up a project first; choose --project if several exist.");
+        var task=new WorkTask(Guid.NewGuid().ToString("N"),profile.Name,goal,DateTimeOffset.UtcNow,[],[],[],[]);
+        Store(task);return task;
+    }
+    public WorkTask Get(string id)=>workspace.Load().Tasks.SingleOrDefault(t=>t.Id==id)??throw new ArgumentException("Unknown task.");
+    public static CoverageItem[] Coverage(SearchHit[] hits)
+    {
+        CoverageItem Item(string name,Func<SearchHit,bool> predicate,string missing)
+        {
+            var found=hits.Where(predicate).SelectMany(h=>h.EvidenceIds).Distinct().ToArray();
+            return new(name,found.Length>0,found,found.Length>0?"Evidence candidates found; inspect their content before claiming completeness.":missing);
+        }
+        return [Item("Modèle cible",h=>h.Role==SourceRole.Target,"Find the target schema and affected objects."),
+            Item("Ancien et correspondances",h=>h.Role==SourceRole.Legacy||h.Reasons.Any(r=>r.Contains("MapsTo")||r.Contains("Evolution")),"Find legacy behavior and validated mappings."),
+            Item("Règles et filtres",h=>h.Kind=="claim"||h.Kind is "procedure" or "method","Find conditions, exceptions and business rules."),
+            Item("Implémentation de référence",h=>h.Role==SourceRole.Current||h.Kind is "method" or "type","Find a comparable implementation and conventions."),
+            Item("Ambiguïtés",h=>h.State==KnowledgeState.Reexamine,"Absence of flagged conflict does not establish absence of ambiguity.")];
+    }
+    public string Fingerprint(string project)
+    {
+        var k=workspace.Load();
+        var sourceIds=k.Sources.Where(s=>s.Context?.Project.Equals(project,StringComparison.OrdinalIgnoreCase)==true).Select(s=>s.Id).Order().ToArray();
+        var claims=k.Claims.Where(c=>c.Context?.Project.Equals(project,StringComparison.OrdinalIgnoreCase)==true).Select(c=>c.Id).ToHashSet();
+        // New relevant evidence can invalidate a dossier even when none of its old citations changed.
+        return Json.Hash(Json.Serialize(new{sources=k.Sources.Where(s=>sourceIds.Contains(s.Id)).OrderBy(s=>s.Id),claims=k.Claims.Where(c=>claims.Contains(c.Id)).OrderBy(c=>c.Id),relations=k.Relations.OrderBy(r=>r.Id),projects=k.Projects.Where(p=>p.Name==project),declarations=k.Questions.Where(q=>q.Project==project&&q.Answer!=null),decisions=workspace.Decisions().Where(d=>claims.Contains(d.ClaimId))}));
+    }
+    public bool IsStale(WorkTask task)=>task.ResearchFingerprint!=null&&task.ResearchFingerprint!=Fingerprint(task.Project);
+    public async Task<WorkTask> Run(string id,string? message,CancellationToken ct)
+    {
+        var task=Get(id);var initial=Json.Hash(Json.Serialize(task));var profile=new Projects(workspace).Find(task.Project)!;
+        var fingerprint=Fingerprint(task.Project);var findings=new Dictionary<string,SearchHit>();var steps=new List<ResearchStep>();var turns=task.Turns.ToList();
+        if(message!=null)
+        {
+            if(message.Length>4000)throw new ArgumentException("Message exceeds 4000 characters.");
+            turns.Add(new(Guid.NewGuid().ToString("N"),"user",message,DateTimeOffset.UtcNow,[]));
+        }
+        var pending=new Queue<string>();pending.Enqueue(task.Goal+(message==null?"":" "+message));var asked=new HashSet<string>();ResearchAdvice? advice=null;
+        var settings=workspace.Config;var cycles=Math.Clamp(settings.MaxResearchCycles,1,5);var engine=new SearchEngine(workspace);
+        for(var cycle=0;cycle<cycles&&pending.Count>0;cycle++)
+        {
+            var query=pending.Dequeue();if(!asked.Add(query))continue;
+            var result=engine.Search(new(query,task.Project,Depth:Math.Clamp(settings.GraphDepth,0,3)));
+            steps.Add(new(cycle+1,query,result.Hits.Select(h=>h.Id).ToArray(),result.Milliseconds));foreach(var hit in result.Hits)findings[hit.Id]=hit;
+            var selected=findings.Values.OrderByDescending(h=>h.Score).Take(30).ToArray();
+            var request=new ResearchRequest(task.Goal,Compact(profile),selected,turns.TakeLast(6).Select(t=>t with{Text=t.Text[..Math.Min(t.Text.Length,1500)]}).ToArray(),Coverage(selected),cycle+1,workspace.Load().Questions.Where(q=>q.Project==task.Project&&q.Answer!=null).TakeLast(5).Select(q=>q with{Answer=q.Answer![..Math.Min(500,q.Answer!.Length)]}).ToArray());
+            var budget=Math.Clamp(settings.ResearchBudget,6000,18000);
+            while(Json.Serialize(request).Length>budget&&request.Findings.Length>0)request=request with{Findings=request.Findings[..^1]};
+            if(Json.Serialize(request).Length>budget)throw new InvalidOperationException("Project and conversation exceed research budget; start a more focused task.");
+            request=request with{Coverage=Coverage(request.Findings)};
+            steps[^1]=steps[^1] with{SuppliedIds=request.Findings.Select(h=>h.Id).ToArray(),RequestHash=Json.Hash(Json.Serialize(request))};
+            advice=await assistant.Investigate(request,ct);Validate(advice,request);
+            foreach(var next in advice.NextQueries.Where(q=>!asked.Contains(q)).Take(3))pending.Enqueue(next);
+            if(advice.NextQueries.Length==0)break;
+        }
+        if(advice==null)throw new InvalidOperationException("No research step executed.");
+        if(Fingerprint(task.Project)!=fingerprint)throw new RevisionConflictException("Evidence changed during research; resume the task to refresh it.");
+        turns.Add(new(Guid.NewGuid().ToString("N"),"assistant",advice.Answer,DateTimeOffset.UtcNow,advice.Citations));
+        var final=task with{Turns=turns,Searches=task.Searches.Concat(steps).ToList(),Findings=findings.Values.ToArray(),Coverage=Coverage(findings.Values.ToArray()),Revision=workspace.SemanticRevision,ResearchFingerprint=fingerprint};
+        using var gate=workspace.Lock();var k=workspace.Load();var current=k.Tasks.Single(t=>t.Id==id);
+        if(Json.Hash(Json.Serialize(current))!=initial||Fingerprint(task.Project)!=fingerprint)throw new RevisionConflictException("Task or project changed; resume instead of overwriting concurrent work.");
+        k.Tasks.RemoveAll(t=>t.Id==id);k.Tasks.Add(final);
+        foreach(var question in advice.Questions)
+        {
+            var qid=Json.Hash(task.Project+question);
+            if(!k.Questions.Any(q=>q.Id==qid))k.Questions.Add(new(qid,task.Project,question,advice.Citations));
+        }
+        workspace.Save(k);return final;
+    }
+    public static ProjectProfile Compact(ProjectProfile p)=>p with{Objective=p.Objective[..Math.Min(600,p.Objective.Length)],Architecture=p.Architecture[..Math.Min(600,p.Architecture.Length)],Conventions=p.Conventions.Take(5).Select(c=>c[..Math.Min(c.Length,200)]).ToArray(),Glossary=p.Glossary.Take(5).ToArray(),Domains=p.Domains.Take(5).ToArray(),Authorities=p.Authorities.Take(5).ToArray(),Systems=p.Systems.Take(5).ToArray()};
+    public static void Validate(ResearchAdvice advice,ResearchRequest request)
+    {
+        if(string.IsNullOrWhiteSpace(advice.Answer)||advice.Answer.Length>16000||advice.Citations==null||advice.NextQueries==null||advice.Questions==null||advice.NextQueries.Length>3||advice.Questions.Length>5||advice.NextQueries.Concat(advice.Questions).Any(x=>string.IsNullOrWhiteSpace(x)||x.Length>1000))throw new InvalidDataException("Invalid research response.");
+        var ids=request.Findings.Select(h=>h.Id).Concat(request.Findings.SelectMany(h=>h.EvidenceIds)).Concat((request.HumanDeclarations??[]).Select(q=>q.Id)).ToHashSet();
+        if(advice.Citations.Any(id=>!ids.Contains(id))||request.Findings.Length>0&&advice.Citations.Length==0)throw new InvalidDataException("Research response must cite supplied evidence.");
+    }
+    public OpenQuestion Remember(string project,string declaration,string actor,bool confirmed)
+    {
+        if(!confirmed||string.IsNullOrWhiteSpace(declaration)||declaration.Length>4000||string.IsNullOrWhiteSpace(actor))throw new ArgumentException("Use --confirm, --actor and a declaration of at most 4000 characters.");
+        var profile=new Projects(workspace).Find(project)??throw new ArgumentException("Unknown project.");
+        using var gate=workspace.Lock();workspace.EnsureWritable();var k=workspace.Load();
+        var q=new OpenQuestion(Guid.NewGuid().ToString("N"),profile.Name,"Déclaration humaine",[],declaration,actor);k.Questions.Add(q);workspace.Save(k);return q;
+    }
+    public void AnswerQuestion(string id,string text,string actor,bool confirmed)
+    {
+        if(!confirmed)throw new ArgumentException("Use --confirm to record this human declaration.");
+        if(string.IsNullOrWhiteSpace(text)||text.Length>4000||string.IsNullOrWhiteSpace(actor))throw new ArgumentException("Answer and actor are required.");
+        using var gate=workspace.Lock();workspace.EnsureWritable();var k=workspace.Load();var q=k.Questions.Single(x=>x.Id==id);
+        // Keep the initial question and each declaration in task history; do not turn a user's answer into extracted evidence.
+        k.Questions[k.Questions.IndexOf(q)]=q with{Answer=text,Actor=actor};workspace.Save(k);
+    }
+    public string Export(string id)
+    {
+        var task=Get(id);var text=new StringBuilder($"# {task.Goal}\n\nProjet : {task.Project}\nÉtat : {(IsStale(task)?"À actualiser":"Révision consultée à jour")}\n");
+        foreach(var c in task.Coverage)text.AppendLine($"- {c.Name} : {(c.Supported?"preuves candidates":"à compléter")} — {c.Explanation}");
+        foreach(var turn in task.Turns)text.AppendLine($"\n## {turn.Role}\n{turn.Text}\nRéférences : {string.Join(", ",turn.Citations)}");
+        text.AppendLine("\n## Preuves consultées");foreach(var hit in task.Findings)text.AppendLine($"\n### {hit.Title} [{hit.Id}]\n{hit.Text}\nStatut : {hit.State} ; origine : {hit.Origin} ; rôle : {hit.Role} ; preuves : {string.Join(", ",hit.EvidenceIds)}");
+        text.AppendLine("\n## Recherches");foreach(var step in task.Searches)text.AppendLine($"- {step.Query}: {step.ResultIds.Length} résultats, {step.Milliseconds:F0} ms ; transmis : {string.Join(", ",step.SuppliedIds??[])} ; empreinte : {step.RequestHash}");
+        return text.ToString();
+    }
+    private void Store(WorkTask task){using var gate=workspace.Lock();workspace.EnsureWritable();var k=workspace.Load();k.Tasks.Add(task);workspace.Save(k);}
+}

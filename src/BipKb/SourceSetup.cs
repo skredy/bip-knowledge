@@ -1,0 +1,117 @@
+using System.Text.RegularExpressions;
+namespace BipKb;
+
+/// <summary>Collects declared context before any model call. Streams are injectable for terminal tests.</summary>
+public sealed class SourceSetup(Workspace workspace,TextReader input,TextWriter output,bool interactive)
+{
+    public static bool Under(string path,string root)
+    {
+        var relative=Path.GetRelativePath(root,path);
+        return relative!=".."&&!relative.StartsWith(".."+Path.DirectorySeparatorChar)&&!Path.IsPathRooted(relative);
+    }
+    public async Task<string> Prepare(string path,string? sourceId,SourceRole? role,string? contextFile,bool describe,CancellationToken ct)
+    {
+        path=Path.GetFullPath(path);
+        if(!File.Exists(path)&&!Directory.Exists(path))throw new IOException("Source inaccessible ; aucun changement effectué.");
+        workspace.EnsureWritable();
+        Extractor.EnsureNoLinks(path);
+        var config=workspace.Config;var bindings=workspace.Bindings();
+        if(sourceId==null)
+        {
+            var matches=bindings.Where(b=>Under(path,b.Value)).Select(b=>b.Key).ToArray();
+            if(matches.Length>1)
+            {
+                if(!interactive)throw new ArgumentException("Plusieurs sources correspondent. Précisez --source : "+string.Join(", ",matches));
+                output.WriteLine("Sources possibles : "+string.Join(", ",matches));
+                sourceId=Read("Source à utiliser",null,ct);
+                if(!matches.Contains(sourceId))throw new ArgumentException("Choisissez une des sources proposées.");
+            }
+            else sourceId=matches.SingleOrDefault();
+        }
+        string? root=null;
+        if(sourceId!=null&&bindings.TryGetValue(sourceId,out root)&&!Under(path,root))throw new ArgumentException("Chemin hors de la source sélectionnée.");
+        if(root==null&&sourceId!=null&&config.Sources.Any(s=>s.Id==sourceId))throw new ArgumentException("Cette source partagée doit être remappée avec source bind avant ingestion.");
+        root??=Directory.Exists(path)?path:Path.GetDirectoryName(path)!;
+        var definition=config.Sources.SingleOrDefault(s=>s.Id==sourceId);
+        var existing=definition?.Resolve(Path.GetRelativePath(root,path));
+        SourceDescriptor? supplied=null;
+        if(contextFile!=null)
+        {
+            if(new FileInfo(contextFile).Length>32000)throw new ArgumentException("Fichier de contexte trop volumineux.");
+            supplied=Json.Read<SourceDescriptor>(File.ReadAllText(contextFile));supplied.Validate();
+            if(role!=null&&role!=supplied.Role)throw new ArgumentException("--role contredit le rôle du fichier de contexte.");
+        }
+        if(existing!=null&&supplied==null&&!describe&&(role==null||role==existing.Role))
+        {
+            existing.Validate();
+            output.WriteLine($"Contexte réutilisé : {existing.Context.Project} / {existing.Context.Domain} — {existing.Role}, {existing.Context.Status}. Utilisez --describe pour le modifier.");
+            return sourceId!;
+        }
+        if(!interactive&&supplied==null)throw new ArgumentException("Contexte manquant ou modifié. Relancez dans un terminal interactif, ou fournissez --context-file contexte.json (role, context: project, domain, description, status, notes). Aucun appel Copilot effectué.");
+        var files=await Extractor.Inventory(path,root,config,ct);
+        output.WriteLine($"Inventaire : {files.Count} fichier(s) ; "+string.Join(", ",files.GroupBy(p=>Path.GetExtension(p).ToLowerInvariant()).OrderBy(g=>g.Key).Select(g=>$"{g.Count()} {g.Key}")));
+        SourceDescriptor? suggestionContext=null;
+        if(interactive&&existing==null&&supplied==null)
+        {
+            var preview=new System.Text.StringBuilder(Path.GetFileName(path));
+            foreach(var file in files.Where(f=>!Extractor.IsImage(f)).Take(2))
+            {
+                try{foreach(var unit in Extractor.Read(file,config.MaxFileBytes).Units.Take(2))preview.Append(' ').Append(unit.Text[..Math.Min(500,unit.Text.Length)]);}
+                catch(Exception e) when(e is InvalidDataException or System.Xml.XmlException or System.Text.Json.JsonException){output.WriteLine("Aperçu indisponible : "+Path.GetFileName(file));}
+            }
+            var terms=SearchEngine.Terms(preview.ToString());
+            var candidates=config.Sources.SelectMany(s=>(s.Overrides?.Values??Enumerable.Empty<SourceDescriptor>()).Concat(s.Context==null?[]:[new SourceDescriptor(s.Role,s.Context)]))
+                .Select(d=>new{Descriptor=d,Score=terms.Count(t=>SearchEngine.Normalize(d.Context.Description+" "+d.Context.Domain).Contains(t))}).Where(x=>x.Score>=2).OrderByDescending(x=>x.Score).ToArray();
+            if(candidates.Length>0)
+            {
+                suggestionContext=candidates[0].Descriptor;
+                output.WriteLine("Contexte proche trouvé (suggestion, pas une classification certaine) : "+Json.Serialize(suggestionContext));
+                if(Read("Réutiliser ce contexte ? oui/non","non",ct) is "oui" or "o")supplied=suggestionContext;
+            }
+        }
+        if(sourceId==null)
+        {
+            if(!interactive)throw new ArgumentException("Première ingestion automatisée : fournissez --source <nom> et --context-file.");
+            var suggestion=Regex.Replace(Path.GetFileName(Path.TrimEndingDirectorySeparator(path)),"[^a-zA-Z0-9_-]","-");
+            sourceId=Read("Nom de cette source",suggestion.Length>0?suggestion:"source",ct);
+            if(config.Sources.Any(s=>s.Id==sourceId))throw new ArgumentException("Nom déjà utilisé. Précisez --source pour sélectionner une source existante.");
+        }
+        if(supplied==null)
+        {
+            output.WriteLine("Le format ne définit pas le sens métier. Ce contexte s'appliquera uniquement au chemin sélectionné et sera conservé.");
+            var known=config.Sources.SelectMany(s=>(s.Overrides?.Values.Select(v=>v.Context)??Enumerable.Empty<SourceContext>()).Concat(s.Context==null?[]:[s.Context])).Select(c=>$"{c.Project} / {c.Domain}").Distinct().Take(20).ToArray();
+            if(known.Length>0)output.WriteLine("Contextes existants (réutilisez les mêmes noms pour relier les sources) : "+string.Join(" ; ",known));
+            var profiles=workspace.Load().Projects;
+            if(profiles.Count>0)output.WriteLine("Projets configurés : "+string.Join(" ; ",profiles.Select(p=>p.Name)));
+            var project=Read("Projet ou système",existing?.Context.Project??(profiles.Count==1?profiles[0].Name:null),ct);
+            var selectedProject=profiles.SingleOrDefault(p=>p.Name.Equals(project,StringComparison.OrdinalIgnoreCase));
+            if(selectedProject!=null)output.WriteLine("Domaines configurés : "+string.Join(" ; ",selectedProject.Domains.Select(d=>d.Name)));
+            var domain=Read("Domaine fonctionnel",existing?.Context.Domain??(selectedProject?.Domains.Length==1?selectedProject.Domains[0].Name:null),ct);
+            var roleText=Read("Rôle : legacy / target / current",(role??existing?.Role??definition?.Role)?.ToString().ToLowerInvariant(),ct);
+            if(!Enum.TryParse<SourceRole>(roleText,true,out var selectedRole)||!Enum.IsDefined(selectedRole)||selectedRole==SourceRole.Unknown)throw new ArgumentException("Rôle inconnu.");
+            var statusText=Read("Statut : proposal / validated / observed / historical",existing?.Context.Status.ToString().ToLowerInvariant(),ct);
+            if(!Enum.TryParse<SourceStatus>(statusText,true,out var status)||!Enum.IsDefined(status))throw new ArgumentException("Statut inconnu.");
+            var description=Read("Que contient cet ensemble, et à quoi sert-il ?",existing?.Context.Description,ct);
+            var notes=Read("Précisions, limites ou correspondances connues (facultatif)",existing?.Context.Notes??"",ct,true);
+            supplied=new(selectedRole,new(project,domain,description,status,notes));supplied.Validate();
+        }
+        output.WriteLine(Json.Serialize(supplied));
+        if(interactive)
+        {
+            var answer=Read("Enregistrer ce contexte et analyser ? oui/non","non",ct);
+            if(answer is not "oui" and not "o" and not "yes" and not "y")throw new OperationCanceledException("Ingestion annulée avant enregistrement.");
+        }
+        ct.ThrowIfCancellationRequested();workspace.ConfigureSource(sourceId,root,path,supplied);
+        if(new Projects(workspace).Find(supplied.Context.Project)==null)output.WriteLine("Fiche globale non configurée : lancez bip-kb project setup pour préparer les enquêtes et conversations.");
+        return sourceId;
+    }
+    private string Read(string label,string? fallback,CancellationToken ct,bool optional=false)
+    {
+        ct.ThrowIfCancellationRequested();output.Write(label+(fallback!=null?$" [{fallback}]":"")+" : ");output.Flush();
+        var line=input.ReadLine()??throw new OperationCanceledException("Saisie interrompue.");
+        if(line.Trim().Equals("/cancel",StringComparison.OrdinalIgnoreCase))throw new OperationCanceledException();
+        var value=line.Trim().Length==0?fallback??"":line.Trim();
+        if(value.Length==0&&!optional)throw new ArgumentException("Champ requis : "+label);
+        return value;
+    }
+}
