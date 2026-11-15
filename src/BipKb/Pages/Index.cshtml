@@ -1,0 +1,31 @@
+@page
+@model IndexModel
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>iBip — connaissance technique</title>
+<style>body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#182438;background:#f5f7fa}nav{display:flex;gap:1.3rem;margin:2rem 0}a{color:#1452a0}article,section{background:white;border:1px solid #d9e0e8;border-radius:8px;padding:1.2rem;margin:1rem 0}input,select,textarea,button{font:inherit;padding:.5rem;margin:.3rem}textarea{width:90%}button{background:#1452a0;color:white;border:0;border-radius:4px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f4f8;padding:1rem}small{overflow-wrap:anywhere}.warning{color:#8a3500}label{display:block}h1{margin-bottom:0}</style></head><body>
+<h1>iBip</h1><p>Des connaissances reliées à leurs preuves.</p>
+<nav><a href="/?view=search">Rechercher</a><a href="/?view=ingestions">Ingestions</a><a href="/?view=review">Arbitrages</a></nav>
+@if(Model.Error!=null){<p class="warning">@Model.Error</p>}
+@if(Model.View=="ingestions"){
+<h2>Ingestions publiées</h2>
+@foreach(var report in Model.Knowledge.Reports.OrderByDescending(r=>r.At)){
+<section><h3>@report.SourceId — @report.At.ToString("u")</h3><small>@report.Id</small><p>@report.Files fichiers, @report.Unchanged inchangés.</p>
+@foreach(var count in report.Counts.Where(c=>c.Value>0)){<span>@count.Key : @count.Value · </span>}
+@foreach(var warning in report.Warnings){<p class="warning">@warning</p>}
+</section>}
+}else{
+@if(Model.View=="search"){<form method="get"><label>Rechercher une entité ou une règle <input name="q" value="@Model.Query"></label><button>Rechercher</button></form>}
+@if(Model.View=="review"){<h2>Décisions à examiner</h2>}
+@if(Model.Claims.Count==0){<p>Aucun résultat. Importez vos sources ou précisez votre recherche.</p>}
+@foreach(var claim in Model.Claims){
+<article><h2><a href="/?view=detail&amp;id=@claim.Id">@Model.Knowledge.Entities.Single(e=>e.Id==claim.EntityId).Name</a></h2><p>@claim.Statement</p>
+<p>@claim.Role · @claim.Contribution · @(claim.Obsolete?"Preuve devenue historique":"Preuve active")</p>
+@if(Workspace.Conflict(Model.Decisions,claim.Id)){<p class="warning">Décisions concurrentes incompatibles : arbitrage nécessaire.</p>}
+@foreach(var decision in Workspace.Effective(Model.Decisions,claim.Id)){<p>Décision : @decision.Action — @decision.Reason (@decision.Actor)</p>}
+@if(Model.View is "detail" or "review"){
+@foreach(var evidence in Model.Knowledge.Evidence.Where(e=>claim.EvidenceIds.Contains(e.Id))){<details><summary>@evidence.SourceId/@evidence.RelativePath — @evidence.Locator</summary><small>Version @evidence.Version</small><pre>@evidence.Excerpt</pre></details>}
+@foreach(var related in claim.RelatedClaimIds){<p><a href="/?view=detail&amp;id=@related">Connaissance liée : @related</a></p>}
+<form method="post"><input type="hidden" name="claimId" value="@claim.Id"><label>Décision <select name="action"><option value="accept">Accepter</option><option value="reject">Rejeter</option><option value="distinct">Concepts distincts</option><option value="replace">Remplace les connaissances liées</option></select></label><label>Justification <textarea name="reason" required maxlength="4000"></textarea></label><label>Votre nom <input name="actor" required maxlength="200"></label><button>Enregistrer la décision</button></form>
+}
+</article>}
+}
+</body></html>
