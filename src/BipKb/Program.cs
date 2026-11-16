@@ -10,7 +10,7 @@ public static class Cli
     public static async Task<int> Run(string[] args)
     {
         if(args.Length==1 && args[0] is "--help" or "-h")args=["help"];
-        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.3.11");return 0;}
+        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.4.0");return 0;}
         using var cancel=new CancellationTokenSource();
         Console.CancelKeyPress+=(_,e)=>{e.Cancel=true;cancel.Cancel();};
         try
@@ -45,7 +45,9 @@ bip-kb — Mémoire technique sourcée
       --reanalyze: force full model analysis, bypassing cached answers.
       First import: guided context; /cancel aborts before ingestion.
   search <query> | ask <question> | context <task> [--output <file>]
-  report <ingestion-id> | review
+  report <ingestion-id> | analysis <source-id> | review
+  --ingest <path> --analyze [--analysis-mode guided|batches] [--max-calls 50]
+      guided explores first; batches resumes older analyses. --reanalyze bypasses caches.
   review <claim-id> --action accept|reject|distinct|replace --reason <text> --actor <name>
   export --output <empty-directory> | import | reindex
       reindex rebuilds local search from published memory, without re-ingestion or Copilot.
@@ -91,12 +93,18 @@ All commands: --workspace <directory>, --json. Quote multiword arguments.
                 case "ingest":
                     var input=parsed.IngestionInput();
                     var analyze=parsed.Has("analyze")||parsed.Has("reanalyze");
-                    var source=await new SourceSetup(workspace,Console.In,Console.Error,!Console.IsInputRedirected&&!parsed.Has("non-interactive")&&!parsed.Has("json"))
+                    var analysisMode=parsed.Get("analysis-mode")??"guided";
+                    if(analysisMode is not ("guided" or "batches"))throw new ArgumentException("--analysis-mode : guided ou batches.");
+                    if(!analyze&&(parsed.Has("analysis-mode")||parsed.Has("max-calls")))throw new ArgumentException("--analysis-mode et --max-calls accompagnent --analyze ou --reanalyze.");
+                    int? maxCalls=null;
+                    if(parsed.Get("max-calls") is {} callsText)
+                    {if(analysisMode!="guided"||!int.TryParse(callsText,out var calls)||calls is <1 or >100)throw new ArgumentException("--max-calls : 1 à 100, en mode guided.");maxCalls=calls;}
+                    var source=await new SourceSetup(workspace,Console.In,parsed.Has("json")?TextWriter.Null:Console.Error,!Console.IsInputRedirected&&!parsed.Has("non-interactive")&&!parsed.Has("json"))
                         .Prepare(input,parsed.Get("source"),role,parsed.Get("context-file"),parsed.Has("describe"),cancel.Token,analyze);
                     await using(var progress=new IngestionProgress(parsed.Has("json")?null:Console.Error))
                     {
                         analyzer.Progress=progress.Report;
-                        try{result=await new Ingestor(workspace,analyzer,progress.Report).Run(input,source,null,parsed.Has("reanalyze"),cancel.Token,analyze);}
+                        try{result=await new Ingestor(workspace,analyzer,progress.Report).Run(input,source,null,parsed.Has("reanalyze"),cancel.Token,analyze,analysisMode=="guided",maxCalls);}
                         finally{analyzer.Progress=null;}
                     }
                     break;
@@ -106,6 +114,13 @@ All commands: --workspace <directory>, --json. Quote multiword arguments.
                 case "context":
                     var context=service.Context(Required(1),parsed.Get("project"),parsed.Get("domain"));if(parsed.Get("output") is {} output){File.WriteAllText(output,context);result=new{output};}else result=context;break;
                 case "report":result=workspace.Load().Reports.SingleOrDefault(r=>r.Id==Required(1))??throw new ArgumentException("Unknown report.");break;
+                case "analysis":
+                    var analysisSource=Required(1);var analysisStatus=Path.Combine(workspace.Local,"exploration","status");
+                    var publishedSources=workspace.Load().Sources.Where(s=>s.Active&&s.SourceId==analysisSource).ToArray();
+                    var localStatuses=Directory.Exists(analysisStatus)?Directory.GetFiles(analysisStatus,"*.json").Select(f=>Json.Read<ExplorationStatus>(File.ReadAllText(f))).Where(s=>s.Source==analysisSource).ToArray():[];
+                    result=new{published=publishedSources.Where(s=>s.Exploration!=null).Select(s=>new{s.RelativePath,s.Analyzed,s.Exploration}),
+                        local=localStatuses.Select(s=>new{s.RelativePath,s.Step,s.RemainingUnits,s.Plan,state=publishedSources.Any(p=>p.Exploration?.RunId==s.RunId)?"published":s.State,
+                            stale=publishedSources.Any(p=>p.RelativePath==s.RelativePath&&p.CacheKey!=s.SourceKey)})};break;
                 case "reindex":
                     await using(var indexProgress=new IngestionProgress(parsed.Has("json")?null:Console.Error,label:"index"))
                         new SearchEngine(workspace).Refresh(force:true,progress:indexProgress.Report,ct:cancel.Token);
@@ -147,7 +162,7 @@ public sealed class Arguments
     public List<string> Words {get;}=[];
     public Arguments(string[] args)
     {
-        string[] switches=["json","ingest","analyze","reanalyze","live","describe","non-interactive","dry-run","confirm","history"];string[] values=["workspace","file","path","image","schema","source","role","output","port","action","reason","actor","context-file","project","domain","task","message","name","count","intent"];
+        string[] switches=["json","ingest","analyze","reanalyze","live","describe","non-interactive","dry-run","confirm","history"];string[] values=["workspace","file","path","image","schema","source","role","output","port","action","reason","actor","context-file","project","domain","task","message","name","count","intent","analysis-mode","max-calls"];
         for(var i=0;i<args.Length;i++)
         {
             if(!args[i].StartsWith("--")){Words.Add(args[i]);continue;}

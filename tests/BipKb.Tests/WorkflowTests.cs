@@ -126,7 +126,7 @@ public class WorkflowTests
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"ingest","arguments":{}}}
 """);var output=new StringWriter();await Mcp.Run(s.Workspace,input,output,default);
         var lines=output.ToString().Split('\n',StringSplitOptions.RemoveEmptyEntries);Assert.Equal(3,lines.Length);
-        using var list=JsonDocument.Parse(lines[1]);Assert.Equal(8,list.RootElement.GetProperty("result").GetProperty("tools").GetArrayLength());
+        using var list=JsonDocument.Parse(lines[1]);Assert.Equal(9,list.RootElement.GetProperty("result").GetProperty("tools").GetArrayLength());
         using var rejected=JsonDocument.Parse(lines[2]);Assert.True(rejected.RootElement.TryGetProperty("error",out _));
     }
     [UnixFact] public async Task ProcessTimeoutKillsChild()

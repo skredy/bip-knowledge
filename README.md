@@ -2,7 +2,7 @@
 
 Assistant local de connaissance technique : ingestion de documents et de code, mémoire sourcée, recherche, enquêtes avec Copilot CLI et dossiers de travail persistants. .NET 10, SQLite FTS5, Razor Pages, partage par Git et MCP en lecture seule.
 
-**Version 0.3.11.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
+**Version 0.4.0.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
 
 ## Installer ou mettre à jour
 
@@ -20,7 +20,7 @@ Sous Linux :
 dotnet restore --locked-mode
 dotnet test --no-restore
 dotnet pack src/BipKb -c Release --no-restore -o artifacts
-dotnet tool install BipKb --version 0.3.11 --add-source ./artifacts --tool-path ./artifacts/tools
+dotnet tool install BipKb --version 0.4.0 --add-source ./artifacts --tool-path ./artifacts/tools
 ```
 
 ### Si vous avez une base 0.1 ou 0.2
@@ -85,15 +85,45 @@ bip-kb --ingest "C:/repos/bip/src/Commandes" --analyze
 
 Le choix s'applique à la commande, pas au format : Excel et Draw.io peuvent être indexés rapidement ou analysés entièrement. `ask` et les dossiers de recherche utilisent ensuite Copilot sur des résultats bornés, avec citations et recherches complémentaires ; ils ne lancent pas une analyse du dépôt entier et ne réingèrent pas automatiquement leurs réponses comme des faits. `search` et `context` restent locaux. Un profil de projet est nécessaire pour `ask` (`project setup` si nécessaire).
 
-`--analyze` complète l'analyse des fichiers qui n'ont été qu'indexés, tout en réutilisant les analyses à jour. **`--reanalyze` force l'analyse Copilot et contourne le cache : ne pas le conserver pour passer en mode rapide.** L'analyse exhaustive conserve son coût par lot ; la 0.3.9 ne promet pas de l'accélérer pour tout un dépôt.
+`--analyze` complète l'analyse des fichiers qui n'ont été qu'indexés, tout en réutilisant les analyses à jour. **`--reanalyze` force une nouvelle analyse et contourne le cache : ne pas le conserver pour une reprise.** Depuis la 0.4.0, la CLI utilise l'exploration guidée décrite ci-dessous. L'ancien parcours reste disponible avec `--analysis-mode batches`.
 
 Depuis la **0.3.11**, les lots Excel partagent les en-têtes identiques une seule fois par feuille dans chaque demande. Les lignes vides contenant seulement une répétition d'en-têtes ne déclenchent plus d'analyse. Les cellules renseignées, leurs coordonnées, les preuves complètes et leurs identifiants sont conservés. Le nombre de lots est affiché avant les appels ; un classeur compressé de 100 Ko peut néanmoins contenir beaucoup de texte. `--analyze` reste une analyse exhaustive en plusieurs appels, pas une indexation locale.
 
-Un fichier isolé ne déclenche plus un second passage de « rapprochement entre fichiers ». Chaque lot compare toujours son contenu aux connaissances pertinentes déjà présentes. Pour reprendre une analyse Excel commencée avec une version antérieure, arrêter l'ancien processus, mettre à jour puis relancer **avec `--analyze`, sans `--reanalyze`** : les premiers lots validés sont récupérés si leurs demandes correspondent, puis les lignes restantes sont regroupées. Le contexte déjà renseigné est réutilisé. Les analyses déjà publiées ne sont pas relancées simplement par la mise à jour.
+Un fichier isolé ne déclenche plus un second passage de « rapprochement entre fichiers ». Chaque lot compare toujours son contenu aux connaissances pertinentes déjà présentes. Pour reprendre une analyse Excel commencée en 0.3.x, arrêter l'ancien processus, mettre à jour puis relancer **avec `--analyze --analysis-mode batches`, sans `--reanalyze`** : les premiers lots validés sont récupérés si leurs demandes correspondent, puis les lignes restantes sont regroupées. Le contexte déjà renseigné est réutilisé. Les analyses déjà publiées ne sont pas relancées simplement par la mise à jour.
 
 Les connaissances et décisions déjà publiées sont conservées si leurs sources sont inchangées. Les lots d'une analyse interrompue sont récupérés quand leur demande correspond encore exactement. Une modification de source peut rendre les anciennes conclusions historiques, même en indexation locale. Le rapport distingue `mode: "index"` et `mode: "analysis"`, avec `unanalyzedFiles` ; ce compteur n'est pas une erreur du mode local. Les images indexées seules sont explicitement signalées comme non analysées visuellement : utiliser `--analyze` pour leur contenu.
 
 Aucune migration n'est nécessaire depuis la 0.3.x. Les membres d'une équipe doivent mettre à jour leur outil avant de lire une mémoire enrichie avec ces nouveaux indicateurs. Un processus déjà lancé conserve son ancien comportement : l'interrompre avec Ctrl+C puis relancer après mise à jour pour changer de mode.
+
+### Exploration guidée par Copilot — 0.4.0
+
+Copilot commence par une vue d'ensemble paginée du document (feuilles/pages, nombres d'unités, aperçus). Il construit un plan, choisit les plages à lire, cherche dans le texte extrait et peut rapprocher des unités éloignées. Les limites de transport bornent les réponses de lecture ; elles ne constituent plus un découpage préalable de tout le fichier. L'exploration est **par fichier**, orientée par le contexte projet et les assertions existantes retrouvées ; ce n'est pas un agent ayant accès à tout le poste ou à tous les dépôts.
+
+```powershell
+# Exploration guidée : choix des lectures, preuves, couverture et synthèse
+bip-kb --ingest "C:/etudes/endpoints.xlsx" --analyze
+bip-kb --ingest "C:/etudes/modele.drawio" --analyze
+bip-kb --ingest "C:/etudes/architecture.png" --analyze
+
+# Consulter le plan publié et les explorations locales interrompues
+bip-kb analysis etudes
+
+# Budget explicite (50 nouveaux échanges par commande par défaut)
+bip-kb --ingest "C:/etudes/endpoints.xlsx" --analyze --max-calls 20
+
+# Reprendre les 41 premiers lots d'une ancienne analyse 0.3.x
+bip-kb --ingest "C:/etudes/endpoints.xlsx" --analyze --analysis-mode batches
+```
+
+`etudes` désigne ici l'identifiant de source configuré pour ces documents. Comme les autres commandes, `analysis` accepte `--workspace` et `--json`. L'interface **Ingestions** affiche aussi les plans, synthèses, questions et plages de couverture publiés. Le MCP propose l'opération de lecture `analysis` avec cet identifiant ; `context` joint les synthèses des sources pertinentes comme interprétations, jamais comme preuves indépendantes.
+
+Les preuves citables proviennent uniquement des unités fournies intégralement dans l'échange. Un aperçu n'est pas une lecture complète. Copilot peut classer une unité lue comme analysée ou non résolue, et exclure explicitement des plages hors sujet avec justification. Les exclusions, même sans lecture intégrale, restent visibles et rendent l'analyse **partielle**. Une synthèse prématurée ne termine pas le parcours : les unités restantes doivent être examinées ou explicitement exclues. La couverture mesure le travail déclaré sur les données fournies, pas la justesse métier du modèle.
+
+Chaque réponse validée est conservée sous `.local/exploration/`. Si le budget est atteint ou qu'une réponse est refusée, aucune révision inachevée n'est publiée : relancer **la même commande sans `--reanalyze`** reprend les échanges dont les demandes sont inchangées. Cela fonctionne aussi après une réanalyse forcée d'une source déjà analysée. Le budget compte les nouveaux échanges d'exploration, hors sonde d'aide et tentatives bornées de format/erreurs transitoires de l'adaptateur. Il est commun à tous les fichiers de la commande, et configurable dans `bip.json` (`maxExplorationCalls`, de 1 à 100). Un plafond absolu de 512 échanges par document évite les boucles persistantes.
+
+Une analyse terminée avec exclusions ou éléments non résolus est publiée comme partielle ; une réingestion inchangée la conserve. Utiliser `--reanalyze` pour la réexaminer volontairement. Les anciens lots `staging/` et les nouveaux échanges `exploration/` ne sont pas interchangeables : conserver le mode `batches` pour terminer une analyse 0.3.x en cours. Ne supprimer ni l'un ni l'autre pendant une reprise.
+
+Limites par format : Excel conserve les valeurs stockées et coordonnées, sans recalcul de formules ni lecture visuelle de la mise en page. Draw.io fournit les objets, connexions, groupes, styles et géométrie XML, **sans rendu visuel**. PNG/JPEG utilisent la pièce jointe complète si la CLI le permet ; une image illisible ou non prise en charge reste non résolue. Cette version ne fabrique ni recadrage, ni OCR, ni référence de région. Aucun gain de temps ou de compréhension sur un corpus professionnel n'est déduit des tests simulés. Voir le [plan de réalisation](docs/guided-analysis-plan.md) et la [validation](docs/validation.md).
 
 ### Construction de l'index local trop longue
 

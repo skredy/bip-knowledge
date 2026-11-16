@@ -92,7 +92,7 @@ def main():
         shutil.copy(repo / "tests/BipKb.Tests/Fixtures/study.xls", corpus / "etude.xls")
 
         def cli(*words, workspace=kb, expected=0, analyze=True):
-            options = ["--analyze"] if analyze and words[0] == "--ingest" else []
+            options = ["--analyze", "--analysis-mode", "batches"] if analyze and words[0] == "--ingest" else []
             result = subprocess.run(command + list(map(str, words)) + options + ["--workspace", str(workspace), "--json"], capture_output=True, text=True, timeout=40)
             assert result.returncode == expected, result.stdout + result.stderr
             assert '[ingestion ' not in result.stderr, result.stderr
@@ -100,7 +100,7 @@ def main():
             return json.loads(result.stdout if expected == 0 else result.stderr)
 
         def terminal(*words):
-            options = ["--analyze"] if words[0] == "--ingest" else []
+            options = ["--analyze", "--analysis-mode", "batches"] if words[0] == "--ingest" else []
             return Terminal(command + list(map(str, words)) + options + ["--workspace", str(kb)])
 
         cli("init")

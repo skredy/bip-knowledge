@@ -16,15 +16,17 @@ public static class Retrieval
 }
 public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<string>? progress=null)
 {
-    public async Task<IngestionReport> Run(string path,string? sourceId,SourceRole? role,bool reanalyze,CancellationToken ct,bool analyze=true)
+    public async Task<IngestionReport> Run(string path,string? sourceId,SourceRole? role,bool reanalyze,CancellationToken ct,bool analyze=true,bool guided=false,int? maxCalls=null)
     {
         path=Path.GetFullPath(path);
         if(!File.Exists(path)&&!Directory.Exists(path))throw new IOException("Source inaccessible; existing knowledge remains unchanged.");
         progress?.Invoke("Préparation de l'ingestion (Ctrl+C pour interrompre et reprendre plus tard)");
-        progress?.Invoke(analyze?"Mode analyse complète avec Copilot":"Mode indexation locale — aucun appel Copilot ; analyse ciblée avec ask ou --analyze");
+        progress?.Invoke(analyze?(guided?"Mode exploration guidée par Copilot":"Mode analyse par lots avec Copilot"):"Mode indexation locale — aucun appel Copilot ; analyse ciblée avec ask ou --analyze");
+        if(analyze&&guided&&analyzer is not IExplorationAssistant)throw new NotSupportedException("Cet adaptateur ne prend pas en charge l'exploration guidée.");
         workspace.EnsureWritable();
         var baseline=workspace.SemanticRevision;var configuration=Json.Hash(Json.Serialize(workspace.Config));
         var config=workspace.Config; var bindings=workspace.Bindings(); var k=workspace.Load(); var decisions=workspace.Decisions();
+        var explorationBudget=analyze&&guided?new ExplorationBudget(maxCalls??config.MaxExplorationCalls):null;
         static bool Under(string p,string root) { var relative=Path.GetRelativePath(root,p); return relative!=".."&&!relative.StartsWith(".."+Path.DirectorySeparatorChar)&&!Path.IsPathRooted(relative); }
         if(sourceId==null)
         {
@@ -61,12 +63,13 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
             if(new FileInfo(file).Length>config.MaxFileBytes)throw new InvalidDataException("File exceeds maxFileBytes: "+relative);
             var bytes=await File.ReadAllBytesAsync(file,ct); if(bytes.Length>config.MaxFileBytes)throw new InvalidDataException("File grew beyond maxFileBytes."); var hash=Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
             var profile=k.Projects.SingleOrDefault(p=>p.Name.Equals(context.Project,StringComparison.OrdinalIgnoreCase));
-            var key=Json.Hash(hash+Extractor.Version+config.AnalysisProfile+Json.Serialize(new{descriptor,definition.ExcelSheets,config.MaxFileBytes,project=profile})+effectiveRole);
+            var key=Json.Hash(hash+Extractor.VersionFor(file)+config.AnalysisProfile+Json.Serialize(new{descriptor,definition.ExcelSheets,config.MaxFileBytes,project=profile})+effectiveRole);
             var previous=k.Sources.SingleOrDefault(s=>s.Active&&s.SourceId==sourceId&&s.RelativePath==relative);
-            if(!reanalyze&&previous?.CacheKey==key&&(!analyze||previous.Analyzed))
+            var pending=analyze&&guided&&new DocumentExplorer(workspace,(IExplorationAssistant)analyzer).HasPending(sourceId,relative,key,previous);
+            if(!reanalyze&&!pending&&previous?.CacheKey==key&&(!analyze||previous.Analyzed||guided&&previous.Exploration!=null))
             {
                 unchanged++;counts[Contribution.None]++;warnings.AddRange(previous.Warnings.Select(w=>relative+": "+w));
-                progress?.Invoke(fileLabel+(previous.Analyzed?" — inchangé, analyse réutilisée":" — inchangé, indexation réutilisée"));continue;
+                progress?.Invoke(fileLabel+(previous.Analyzed?" — inchangé, analyse réutilisée":previous.Exploration!=null?" — inchangé, analyse partielle conservée ; --reanalyze pour la réexaminer":" — inchangé, indexation réutilisée"));continue;
             }
             var versionId=Json.Hash(sourceId+"/"+relative+key);
             // Parse the exact bytes that were hashed, not a second read of a changing source.
@@ -78,7 +81,7 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
             try { extraction=Extractor.Read(snapshot,config.MaxFileBytes,config.Sources.Single(s=>s.Id==sourceId).ExcelSheets); }
             finally { File.Delete(snapshot); }
             warnings.AddRange(extraction.Warnings.Select(w=>relative+": "+w));
-            var evidence=extraction.Units.Select(u=>new Evidence(Json.Hash(versionId+u.Id),sourceId,relative,hash,u.Locator,u.Text,u.Parent)).ToArray();
+            var evidence=extraction.Units.Select(u=>new Evidence(Json.Hash(versionId+u.Id),sourceId,relative,hash,u.Locator,u.Text,u.Parent)).DistinctBy(e=>e.Id).ToArray();
             foreach(var e in evidence)if(evidenceIds.Add(e.Id))k.Evidence.Add(e);
             var units=evidence.Select(e=>new Unit(e.Id,$"{sourceId}/{relative} {e.Locator}",e.Excerpt)).ToArray();
             if(extraction.RepeatedHeaders!=null)
@@ -101,9 +104,11 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
                 }
             }
             var analysisComplete=analyze;
-            if(duplicate!=null&&!reanalyze)
+            ExplorationSummary? exploration=null;
+            if(duplicate!=null&&!reanalyze&&!pending)
             {
                 analysisComplete=duplicate.Analyzed;
+                exploration=duplicate.Exploration;
                 progress?.Invoke(fileLabel+" — contenu dupliqué, connaissances réutilisées");
                 foreach(var id in duplicate.ClaimIds)
                 {
@@ -114,6 +119,20 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
                     k.Claims[i]=old with{EvidenceIds=old.EvidenceIds.Concat(corresponding).Distinct().Order().ToArray(),Obsolete=false}; fileClaims.Add(id);
                 }
                 counts[Contribution.None]++; warnings.Add(relative+": duplicate content; not independent corroboration.");
+            }
+            else if(analyze&&guided)
+            {
+                var imageSnapshot=extraction.Image?Path.Combine(workspace.Local,"inputs",Guid.NewGuid().ToString("N")+Path.GetExtension(file)):null;
+                if(imageSnapshot!=null)await File.WriteAllBytesAsync(imageSnapshot,bytes,ct);
+                try
+                {
+                    exploration=await new DocumentExplorer(workspace,(IExplorationAssistant)analyzer,progress).Run(sourceId,relative,key,Path.GetExtension(file).ToLowerInvariant(),units,headers,extraction.Warnings.ToArray(),imageSnapshot,reanalyze,explorationBudget!,
+                        (read,plan)=>Request(k,decisions,effectiveRole,read,Retrieval.Select(k,context.Description+" "+context.Notes+" "+plan+" "+string.Join(" ",read.Select(u=>u.Text)),context:context),"explore",context),Accept,ct);
+                    analysisComplete=exploration.Complete;
+                    if(!analysisComplete)
+                    {var warning=$"Analyse guidée partielle — {exploration.ExcludedUnits} unités exclues, {exploration.UnresolvedUnits} non résolues. Consulter analysis {sourceId}.";extraction.Warnings.Add(warning);warnings.Add(relative+": "+warning);}
+                }
+                finally{if(imageSnapshot!=null)File.Delete(imageSnapshot);}
             }
             else if(analyze||hasStaging)
             {
@@ -160,14 +179,14 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
             }
             if(extraction.Image&&!analysisComplete)
             {
-                const string warning="Image référencée uniquement, contenu visuel non analysé. Utilisez --analyze sur cette image.";
+                var warning=exploration==null?"Image référencée uniquement, contenu visuel non analysé. Utilisez --analyze sur cette image.":"Analyse visuelle incomplète : consulter le plan et les limites avec analysis.";
                 extraction.Warnings.Add(warning);warnings.Add(relative+": "+warning);
             }
             if(previous!=null) k.Sources[k.Sources.IndexOf(previous)]=previous with{Active=false};
             k.Sources.RemoveAll(s=>s.Id==versionId);
-            k.Sources.Add(new(versionId,sourceId,relative,hash,key,effectiveRole,evidence.Select(e=>e.Id).ToArray(),fileClaims.Order().ToArray(),true,extraction.Warnings.ToArray(),context,analysisComplete));
+            k.Sources.Add(new(versionId,sourceId,relative,hash,key,effectiveRole,evidence.Select(e=>e.Id).ToArray(),fileClaims.Order().ToArray(),true,extraction.Warnings.ToArray(),context,analysisComplete,exploration));
             var groupKey=descriptor with{Role=effectiveRole};
-            if(analyze)
+            if(analyze&&!guided)
             {
                 if(!groups.TryGetValue(groupKey,out var groupUnits)){groupUnits=[];groups.Add(groupKey,groupUnits);}
                 groupUnits.AddRange(units);
@@ -209,7 +228,7 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
             }
         RefreshObsolete(k);
         var unanalyzed=k.Sources.Count(s=>s.Active&&s.SourceId==sourceId&&seen.Contains(s.RelativePath)&&!s.Analyzed);
-        var report=new IngestionReport(Guid.NewGuid().ToString("N"),DateTimeOffset.UtcNow,sourceId,files.Count,unchanged,counts,warnings.ToArray(),changed.Distinct().Order().ToArray(),analyze?"analysis":"index",unanalyzed);
+        var report=new IngestionReport(Guid.NewGuid().ToString("N"),DateTimeOffset.UtcNow,sourceId,files.Count,unchanged,counts,warnings.ToArray(),changed.Distinct().Order().ToArray(),analyze?(guided?"guided":"analysis"):"index",unanalyzed);
         k.Reports.Add(report); ct.ThrowIfCancellationRequested();
         progress?.Invoke("Enregistrement des connaissances et du rapport");
         string publishedRevision;

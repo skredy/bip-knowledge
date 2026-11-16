@@ -18,6 +18,9 @@ jobs:
       - name: Interactive terminal regression
         if: runner.os == 'Linux'
         run: python3 scripts/test-terminal.py
+      - name: Guided CLI regression
+        if: runner.os == 'Linux'
+        run: python3 scripts/test-guided.py
       - run: dotnet pack src/BipKb -c Release --no-restore -o artifacts
       - uses: actions/upload-artifact@v4
         with:

@@ -23,6 +23,14 @@ public sealed class KnowledgeService(Workspace workspace)
             text.AppendLine($"\n## {h.Title} [{h.Id}]\n{h.Text}\nPérimètre : {h.Project} / {h.Domain} ; rôle : {h.Role} ; état : {h.State} ; origine : {h.Origin} ; statut source : {h.SourceStatus} ; historique : {h.Historical}.\nRetrouvé par : {string.Join(" ; ",h.Reasons)}");
             foreach(var id in h.EvidenceIds.Take(4))if(evidence.TryGetValue(id,out var e))text.AppendLine($"- Preuve [{id}] : {e.SourceId}/{e.RelativePath}, {e.Locator}, version {e.Version[..Math.Min(12,e.Version.Length)]}.\n  > {e.Excerpt[..Math.Min(1000,e.Excerpt.Length)].Replace("\n","\n  > ")}");
         }
+        var consulted=response.Hits.SelectMany(h=>h.EvidenceIds).ToHashSet();
+        foreach(var source in k.Sources.Where(s=>s.Active&&s.Exploration!=null&&s.EvidenceIds.Any(consulted.Contains)).Take(5))
+        {
+            var exploration=source.Exploration!;
+            var section=$"\n## Compréhension proposée — {source.SourceId}/{source.RelativePath}\nInterprétation Copilot, pas une preuve indépendante. Couverture : {exploration.AnalyzedUnits}/{exploration.TotalUnits} unités analysées, {exploration.ExcludedUnits} exclues, {exploration.UnresolvedUnits} non résolues.\n{exploration.Summary}\nQuestions (aperçu) : {string.Join(" ; ",exploration.Questions.Take(5))}";
+            if(text.Length+section.Length>32000){text.AppendLine("Autres synthèses disponibles avec analysis <source> ; préciser la recherche.");break;}
+            text.AppendLine(section);
+        }
         text.AppendLine("\n## Limites et vérifications suggérées\nL'absence de résultat ne prouve pas l'absence de règle. Vérifier les exceptions, les droits et les tests applicatifs. Les suggestions ne sont pas des exigences documentées.");
         return text.ToString();
     }
@@ -49,7 +57,7 @@ public sealed class KnowledgeService(Workspace workspace)
 }
 public static class Mcp
 {
-    private static readonly string[] Names=["search","entity","evidence","relations","context","project","task","questions"];
+    private static readonly string[] Names=["search","entity","evidence","relations","context","project","task","questions","analysis"];
     public static async Task Run(Workspace workspace,TextReader input,TextWriter output,CancellationToken ct)
     {
         string? line;
@@ -63,9 +71,9 @@ public static class Mcp
                 id=rawId.Clone(); var method=message.GetProperty("method").GetString(); object result;
                 switch(method)
                 {
-                    case "initialize": result=new{protocolVersion="2024-11-05",capabilities=new{tools=new{}},serverInfo=new{name="bip-kb",version="0.3.11"}};break;
+                    case "initialize": result=new{protocolVersion="2024-11-05",capabilities=new{tools=new{}},serverInfo=new{name="bip-kb",version="0.4.0"}};break;
                     case "ping": result=new{};break;
-                    case "tools/list": result=new{tools=Names.Select(n=>new{name=n,description=n switch{"search"=>"Find evidence-backed claims","entity"=>"Read an entity and its claims","evidence"=>"Read claim evidence","relations"=>"Read related claims and decisions",_=>"Prepare a cited development context"},annotations=new{readOnlyHint=true,destructiveHint=false},inputSchema=new{type="object",properties=new Dictionary<string,object>{{n is "search" or "context"?"query":"id",new{type="string"}},{"project",new{type="string"}}},required=new[]{n is "search" or "context"?"query":"id"},additionalProperties=false}})};break;
+                    case "tools/list": result=new{tools=Names.Select(n=>new{name=n,description=n switch{"search"=>"Find evidence-backed claims","entity"=>"Read an entity and its claims","evidence"=>"Read claim evidence","relations"=>"Read related claims and decisions","analysis"=>"Read published exploration plans and coverage for a source id; interpretations, not documentary evidence",_=>"Prepare a cited development context"},annotations=new{readOnlyHint=true,destructiveHint=false},inputSchema=new{type="object",properties=new Dictionary<string,object>{{n is "search" or "context"?"query":"id",new{type="string"}},{"project",new{type="string"}}},required=new[]{n is "search" or "context"?"query":"id"},additionalProperties=false}})};break;
                     case "tools/call":
                         var p=message.GetProperty("params"); var name=p.GetProperty("name").GetString()!;
                         if(!Names.Contains(name))throw new ArgumentException("Unknown read-only tool.");
@@ -79,6 +87,10 @@ public static class Mcp
                             "project"=>new Projects(workspace).Summary(value),
                             "task"=>k.Tasks.SingleOrDefault(t=>t.Id==value)??throw new ArgumentException("Unknown task."),
                             "questions"=>k.Questions.Where(q=>q.Project==value),
+                            "analysis"=>new{sources=k.Sources.Where(s=>s.Active&&s.SourceId==value&&s.Exploration!=null&&(project==null||s.Context?.Project==project)).Select(s=>new{s.RelativePath,s.Analyzed,
+                                s.Exploration!.Protocol,s.Exploration.Plan,s.Exploration.Summary,s.Exploration.TotalUnits,s.Exploration.AnalyzedUnits,s.Exploration.ExcludedUnits,s.Exploration.UnresolvedUnits,s.Exploration.EmptyUnits,s.Exploration.VisualStatus,
+                                coverage=s.Exploration.Coverage.Take(100),coverageTruncated=s.Exploration.Coverage.Length>100,questions=s.Exploration.Questions.Take(8)}).Take(20),
+                                sourceCount=k.Sources.Count(s=>s.Active&&s.SourceId==value&&s.Exploration!=null&&(project==null||s.Context?.Project==project))},
                             "entity"=>new{entity=k.Entities.SingleOrDefault(e=>e.Id==value),technicalObject=k.Objects.SingleOrDefault(o=>o.Id==value),claims=k.Claims.Where(c=>c.EntityId==value)},
                             "relations"=>new{relations=k.Relations.Where(r=>r.From==value||r.To==value),claims=k.Claims.Where(c=>c.Id==value||c.RelatedClaimIds.Contains(value)),decisions=Workspace.Effective(workspace.Decisions(),value)},
                             "evidence"=>k.Evidence.Where(e=>e.Id==value||k.Claims.Any(c=>c.Id==value&&c.EvidenceIds.Contains(e.Id))),

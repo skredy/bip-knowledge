@@ -15,6 +15,7 @@ namespace BipKb;
 public static class Extractor
 {
     public const string Version="extractors-2";
+    public static string VersionFor(string path)=>Path.GetExtension(path).Equals(".drawio",StringComparison.OrdinalIgnoreCase)?"drawio-geometry-3":Version;
     public static readonly string[] Extensions=[".xls",".xlsx",".json",".cs",".csproj",".sql",".md",".txt",".drawio",".png",".jpg",".jpeg"];
     public static bool Supported(string path)=>Extensions.Contains(Path.GetExtension(path).ToLowerInvariant());
     public static bool IsImage(string path)=>new[]{".png",".jpg",".jpeg"}.Contains(Path.GetExtension(path).ToLowerInvariant());
@@ -123,6 +124,7 @@ public static class Extractor
         }
         else if(ext==".drawio")
         {
+            warnings.Add("Draw.io : structure, connexions et géométrie XML ; aucun rendu visuel analysé.");
             var doc=Xml(File.ReadAllText(file));
             if(doc.Root?.Name.LocalName=="mxGraphModel") Graph(doc,"page:1",Add);
             else foreach(var page in doc.Descendants("diagram"))
@@ -203,7 +205,9 @@ public static class Extractor
         {
             var label=(string?)cell.Attribute("value")??(string?)cell.Parent?.Attribute("label")??"";
             var source=(string?)cell.Attribute("source"); var target=(string?)cell.Attribute("target");
-            if(label.Length>0||source!=null) add(page+"; cell:"+(string?)cell.Attribute("id"),$"label: {System.Net.WebUtility.HtmlDecode(label)}; source: {source}; target: {target}; parent: {(string?)cell.Attribute("parent")}");
+            var geometry=cell.Element("mxGeometry")?.ToString(SaveOptions.DisableFormatting);
+            var id=(string?)cell.Attribute("id")??(string?)cell.Parent?.Attribute("id");
+            if(label.Length>0||source!=null||geometry!=null) add(page+"; cell:"+id,$"label: {System.Net.WebUtility.HtmlDecode(label)}; source: {source}; target: {target}; parent: {(string?)cell.Attribute("parent")}; style: {(string?)cell.Attribute("style")}; geometry: {geometry}");
         }
     }
 }

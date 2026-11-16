@@ -86,7 +86,7 @@ print(json.dumps({'type':'result','exitCode':0}))
             log = fixture.with_suffix(".calls")
             if log.exists():
                 log.unlink()
-            run("--ingest", workbook, "--source", "benchmark", "--context-file", descriptor, "--analyze")
+            run("--ingest", workbook, "--source", "benchmark", "--context-file", descriptor, "--analyze", *(["--analysis-mode", "batches"] if name == "candidate" else []))
             calls = [json.loads(line) for line in log.read_text().splitlines()]
             ids = [i for call in calls if call["phase"] == "extract" for i in call["ids"]]
             assert len(ids) == len(set(ids)) == args.rows+1

@@ -46,6 +46,11 @@ public sealed class Workspace(string root)
         if(k.Relations.Any(r=>!endpoints.Contains(r.From)||!endpoints.Contains(r.To)||r.EvidenceIds.Any(e=>!evidence.Contains(e))))throw new InvalidDataException("Broken relation references.");
         if(k.Objects.Any(o=>o.EvidenceIds.Any(e=>!evidence.Contains(e))))throw new InvalidDataException("Broken technical object evidence.");
         if(k.Sources.Any(s=>s.EvidenceIds.Any(e=>!evidence.Contains(e))||s.ClaimIds.Any(c=>!claims.Contains(c)))) throw new InvalidDataException("Broken source references.");
+        foreach(var source in k.Sources.Where(s=>s.Exploration!=null))
+        {
+            DocumentExplorer.ValidateSummary(source.Exploration!,source.EvidenceIds.Length);
+            if(source.Analyzed!=source.Exploration!.Complete)throw new InvalidDataException("Exploration completeness conflicts with source status.");
+        }
         if(k.Sources.Any(s=>Path.IsPathRooted(s.RelativePath)||s.RelativePath.Split('/').Contains(".."))) throw new InvalidDataException("Source paths must be relative.");
         if(k.Sources.Where(s=>s.Active).GroupBy(s=>(s.SourceId,s.RelativePath)).Any(g=>g.Count()>1)) throw new InvalidDataException("Conflicting active source versions; resolve the Git merge.");
     }

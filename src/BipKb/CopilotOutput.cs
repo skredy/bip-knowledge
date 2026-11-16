@@ -41,7 +41,7 @@ public static class CopilotOutput
     {
         // Never display arbitrary field names/values: even exception paths can contain source text.
         var path=error.Path;
-        var safe=path!=null&&System.Text.RegularExpressions.Regex.IsMatch(path,@"^\$(\.(findings|entity|kind|statement|contribution|evidenceIds|relatedClaimIds|uncertain|qualifiedName|conditions|text|claimIds|uncertainties|answer|citations|nextQueries|questions)|\[[0-9]{1,6}\])*$")?path:"champ non prévu";
+        var safe=path!=null&&System.Text.RegularExpressions.Regex.IsMatch(path,@"^\$(\.(findings|entity|kind|statement|contribution|evidenceIds|relatedClaimIds|uncertain|qualifiedName|conditions|text|claimIds|uncertainties|answer|citations|nextQueries|questions|action|plan|summary|reads|start|count|query|offset|reviews|unitId|status|reason|visualStatus|exclusions)|\[[0-9]{1,6}\])*$")?path:"champ non prévu";
         return new InvalidDataException($"Réponse Copilot refusée : {reason} (chemin {safe}, ligne {error.LineNumber}, position {error.BytePositionInLine}).",error);
     }
 
