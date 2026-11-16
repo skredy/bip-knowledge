@@ -2,7 +2,7 @@
 
 Assistant local de connaissance technique : ingestion de documents et de code, mémoire sourcée, recherche, enquêtes avec Copilot CLI et dossiers de travail persistants. .NET 10, SQLite FTS5, Razor Pages, partage par Git et MCP en lecture seule.
 
-**Version 0.3.2.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
+**Version 0.3.3.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
 
 ## Installer ou mettre à jour
 
@@ -20,7 +20,7 @@ Sous Linux :
 dotnet restore --locked-mode
 dotnet test --no-restore
 dotnet pack src/BipKb -c Release --no-restore -o artifacts
-dotnet tool install BipKb --version 0.3.2 --add-source ./artifacts --tool-path ./artifacts/tools
+dotnet tool install BipKb --version 0.3.3 --add-source ./artifacts --tool-path ./artifacts/tools
 ```
 
 ### Si vous avez une base 0.1 ou 0.2
@@ -76,7 +76,11 @@ bip-kb --ingest C:/Documents/Facturation/modele.drawio
 bip-kb --ingest C:/Documents/Facturation/schema.png
 ```
 
-Pas de `source bind` préalable. Le premier import inventorie les fichiers, propose un contexte existant si l'aperçu présente suffisamment de termes communs et demande ce qui manque : nom de source, projet, domaine, rôle (`legacy`, `target`, `current`), statut (`proposal`, `validated`, `observed`, `historical`), description et notes. Vous confirmez avant tout appel Copilot. `/cancel` ou `non` annule la préparation.
+Pas de `source bind` préalable. Le premier import inventorie les fichiers, propose un contexte existant si l'aperçu présente suffisamment de termes communs et demande ce qui manque : identifiant de source, projet, sujet métier, rôle (`legacy`, `target`, `current`), statut (`proposal`, `validated`, `observed`, `historical`), description et notes. Vous confirmez avant tout appel Copilot. `/cancel` ou `non` annule la préparation.
+
+L'**identifiant de source** est un nom court, par exemple `etude-sql` ou `code_actuel` : uniquement lettres sans accent, chiffres, `-` et `_`. Le nom du dossier sert à proposer un identifiant valide et disponible. Une saisie invalide ou un identifiant déjà utilisé est corrigé immédiatement, avant les questions de contexte. Les noms du projet, les sujets métier et les descriptions acceptent espaces et accents.
+
+Le contexte confirmé est enregistré **avant l'appel à Copilot**. Si l'analyse échoue, relancer la même commande réutilise les réponses, y compris les descriptions longues. `--describe` sert uniquement à modifier ce contexte. Une faute dans la réponse oui/non est redemandée ; elle n'annule pas le formulaire.
 
 Le contexte est réutilisé ensuite. `--describe` le modifie pour le chemin sélectionné uniquement ; une exception sur un fichier ou sous-dossier ne modifie pas ses voisins. `--reanalyze` contourne le cache. Les projets restent séparés ; les domaines explicitement liés peuvent être explorés sans être fusionnés.
 

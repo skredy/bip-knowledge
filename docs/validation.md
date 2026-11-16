@@ -94,3 +94,28 @@ Le 16 novembre 2026 : **62 tests réussis, 1 test Copilot réel ignoré**. Les n
 Le 16 novembre 2026 : **71 tests réussis, 1 test Copilot réel ignoré**. Le message « Contexte requis » était aussi utilisé pour un champ rempli mais trop long. Chaque erreur nomme désormais le champ et indique, le cas échéant, sa longueur et sa limite. La saisie guidée redemande uniquement la réponse invalide ; un contexte enregistré invalide peut être corrigé en conservant les autres valeurs. Les notes JSON nulles sont acceptées comme facultatives.
 
 Les tests couvrent chaque limite de longueur, le statut inconnu, les notes facultatives, l'absence d'écriture avant validation, la réparation d'un contexte enregistré et le dépassement du budget après encodage. Un parcours avec le paquet 0.3.2 installé vérifie un contexte dont tous les champs requis sont remplis mais la description trop longue, le diagnostic précis et l'absence d'enregistrement, puis l'ingestion après correction avec Copilot simulé. Cela reproduit une cause du message signalé ; la cause exacte sur le poste utilisateur dépend de sa commande et de ses valeurs.
+
+
+## Correctif 0.3.3 — vérification du parcours complet
+
+**81 tests xUnit réussis, 1 test Copilot réel ignoré.** L'identifiant de source est maintenant validé dès sa saisie et avant tout inventaire pour une option `--source` non interactive invalide. La même règle s'applique à `source bind` et à l'enregistrement du contexte. Les propositions dérivées des noms de dossiers sont valides et évitent les identifiants déjà utilisés. Un identifiant saisi n'est pas renommé silencieusement. Les confirmations acceptent les majuscules et redemandent une réponse en cas de faute.
+
+Le script reproductible `scripts/test-terminal.py` pilote de vrais processus dans un pseudo-terminal Linux, avec un processus Copilot simulé. Il couvre :
+
+1. `init` puis setup interactif du projet.
+2. Import d'un dossier contenant SQL, XLS et C#, avec corrections d'identifiant, rôle, statut et description trop longue.
+3. Descriptions et précisions longues, faute à la confirmation, puis confirmation en majuscules.
+4. Échec volontaire du processus Copilot après enregistrement du contexte ; relance dans un autre processus sans aucune nouvelle saisie.
+5. Réingestion inchangée sans appel au modèle, recherche et dossier de contexte.
+6. Modification du contexte d'un seul fichier, sans changement de ses voisins, puis annulation d'une autre modification sans enregistrement.
+7. Refus immédiat d'un `--source` invalide en mode automatisé.
+8. Export/import vers un second espace, remappage et réingestion inchangée.
+
+Le parcours a été exécuté sur la compilation Debug puis sur le **paquet 0.3.3 installé**. Il est ajouté à la CI Linux ; les tests xUnit des formulaires restent inclus dans la matrice Linux/Windows. L'exécution réelle sous Windows et l'analyse métier par Copilot authentifié ne sont pas établies par ces tests.
+
+```bash
+# Après dotnet build, sans dépendance Python supplémentaire :
+python3 scripts/test-terminal.py
+# Avec un paquet déjà installé :
+python3 scripts/test-terminal.py --tool /chemin/vers/bip-kb
+```

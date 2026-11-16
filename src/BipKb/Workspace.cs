@@ -1,5 +1,4 @@
 using Microsoft.Data.Sqlite;
-using System.Text.RegularExpressions;
 
 namespace BipKb;
 
@@ -125,7 +124,7 @@ public sealed class Workspace(string root)
     public static bool Rejected(IEnumerable<Decision> ds,string id) => !Conflict(ds,id)&&Effective(ds,id).Any(d=>d.Action=="reject");
     public void Bind(string id,string path,SourceRole? role)
     {
-        if(!Regex.IsMatch(id,"^[a-zA-Z0-9_-]+$")) throw new ArgumentException("Source ID: letters, digits, underscore or dash.");
+        SourceIdentifier.Validate(id);
         path=Path.GetFullPath(path);
         if(!Directory.Exists(path)) throw new DirectoryNotFoundException(path);
         using var gate=Lock(); var config=Config; var existing=config.Sources.SingleOrDefault(s=>s.Id==id);
@@ -137,8 +136,8 @@ public sealed class Workspace(string root)
     }
     public void ConfigureSource(string id,string root,string selectedPath,SourceDescriptor descriptor)
     {
+        SourceIdentifier.Validate(id);
         descriptor.Validate();
-        if(!Regex.IsMatch(id,"^[a-zA-Z0-9_-]+$"))throw new ArgumentException("Identifiant de source invalide.");
         root=Path.GetFullPath(root);selectedPath=Path.GetFullPath(selectedPath);
         if(!Directory.Exists(root)||!SourceSetup.Under(selectedPath,root))throw new ArgumentException("Chemin hors de la source.");
         using var gate=Lock();var config=Config;var bindings=Bindings();

@@ -15,6 +15,9 @@ jobs:
           dotnet-version: '10.0.x'
       - run: dotnet restore --locked-mode
       - run: dotnet test --no-restore --logger "trx;LogFileName=tests.trx"
+      - name: Interactive terminal regression
+        if: runner.os == 'Linux'
+        run: python3 scripts/test-terminal.py
       - run: dotnet pack src/BipKb -c Release --no-restore -o artifacts
       - uses: actions/upload-artifact@v4
         with:

@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 namespace BipKb;
 
 /// <summary>Collects declared context before any model call. Streams are injectable for terminal tests.</summary>
@@ -15,6 +14,12 @@ public sealed class SourceSetup(Workspace workspace,TextReader input,TextWriter 
         if(!File.Exists(path)&&!Directory.Exists(path))throw new IOException("Source inaccessible ; aucun changement effectué.");
         workspace.EnsureWritable();
         Extractor.EnsureNoLinks(path);
+        if(sourceId!=null&&SourceIdentifier.Error(sourceId) is {} sourceError)
+        {
+            if(!interactive)throw new ArgumentException(sourceError);
+            output.WriteLine(sourceError);
+            sourceId=Read("Identifiant court de la source",SourceIdentifier.Suggest(sourceId),ct,validate:SourceIdentifier.Error);
+        }
         var config=workspace.Config;var bindings=workspace.Bindings();
         if(sourceId==null)
         {
@@ -23,11 +28,11 @@ public sealed class SourceSetup(Workspace workspace,TextReader input,TextWriter 
             {
                 if(!interactive)throw new ArgumentException("Plusieurs sources correspondent. Précisez --source : "+string.Join(", ",matches));
                 output.WriteLine("Sources possibles : "+string.Join(", ",matches));
-                sourceId=Read("Source à utiliser",null,ct);
-                if(!matches.Contains(sourceId))throw new ArgumentException("Choisissez une des sources proposées.");
+                sourceId=Read("Source à utiliser",null,ct,validate:v=>matches.Contains(v)?null:"Choisissez une des sources proposées.");
             }
             else sourceId=matches.SingleOrDefault();
         }
+        if(sourceId!=null)SourceIdentifier.Validate(sourceId);
         string? root=null;
         if(sourceId!=null&&bindings.TryGetValue(sourceId,out root)&&!Under(path,root))throw new ArgumentException("Chemin hors de la source sélectionnée.");
         if(root==null&&sourceId!=null&&config.Sources.Any(s=>s.Id==sourceId))throw new ArgumentException("Cette source partagée doit être remappée avec source bind avant ingestion.");
@@ -73,15 +78,16 @@ public sealed class SourceSetup(Workspace workspace,TextReader input,TextWriter 
             {
                 suggestionContext=candidates[0].Descriptor;
                 output.WriteLine("Contexte proche trouvé (suggestion, pas une classification certaine) : "+Json.Serialize(suggestionContext));
-                if(Read("Réutiliser ce contexte ? oui/non","non",ct) is "oui" or "o")supplied=suggestionContext;
+                if(Confirm("Réutiliser ce contexte ?",ct))supplied=suggestionContext;
             }
         }
         if(sourceId==null)
         {
             if(!interactive)throw new ArgumentException("Première ingestion automatisée : fournissez --source <nom> et --context-file.");
-            var suggestion=Regex.Replace(Path.GetFileName(Path.TrimEndingDirectorySeparator(path)),"[^a-zA-Z0-9_-]","-");
-            sourceId=Read("Nom de cette source",suggestion.Length>0?suggestion:"source",ct);
-            if(config.Sources.Any(s=>s.Id==sourceId))throw new ArgumentException("Nom déjà utilisé. Précisez --source pour sélectionner une source existante.");
+            var basis=SourceIdentifier.Suggest(Path.GetFileName(Path.TrimEndingDirectorySeparator(path)));var suggestion=basis;
+            for(var suffix=2;config.Sources.Any(s=>s.Id==suggestion);suffix++)suggestion=basis+"-"+suffix;
+            output.WriteLine(SourceIdentifier.Help);
+            sourceId=Read("Identifiant court de la source",suggestion,ct,validate:v=>SourceIdentifier.Error(v)??(config.Sources.Any(s=>s.Id==v)?"Identifiant déjà utilisé. Choisissez un autre identifiant pour ce nouvel emplacement.":null));
         }
         if(supplied==null)
         {
@@ -115,15 +121,20 @@ public sealed class SourceSetup(Workspace workspace,TextReader input,TextWriter 
                 }
             }
         }
-        output.WriteLine(Json.Serialize(supplied));
+        output.WriteLine("Source : "+sourceId);output.WriteLine(Json.Serialize(supplied));
         if(interactive)
         {
-            var answer=Read("Enregistrer ce contexte et analyser ? oui/non","non",ct);
-            if(answer is not "oui" and not "o" and not "yes" and not "y")throw new OperationCanceledException("Ingestion annulée avant enregistrement.");
+            if(!Confirm("Enregistrer ce contexte et analyser ?",ct))throw new OperationCanceledException("Ingestion annulée avant enregistrement.");
         }
         ct.ThrowIfCancellationRequested();workspace.ConfigureSource(sourceId,root,path,supplied);
+        output.WriteLine("Contexte enregistré. Si l'analyse échoue, relancez la même commande : ces réponses seront réutilisées.");
         if(new Projects(workspace).Find(supplied.Context.Project)==null)output.WriteLine("Fiche globale non configurée : lancez bip-kb project setup pour préparer les enquêtes et conversations.");
         return sourceId;
+    }
+    private bool Confirm(string label,CancellationToken ct)
+    {
+        var answer=Read(label+" oui/non","non",ct,validate:v=>v.ToLowerInvariant() is "oui" or "o" or "yes" or "y" or "non" or "n" or "no"?null:"Répondez oui ou non.");
+        return answer.ToLowerInvariant() is "oui" or "o" or "yes" or "y";
     }
     private string Read(string label,string? fallback,CancellationToken ct,bool optional=false,int? maxLength=null,Func<string,string?>? validate=null)
     {
