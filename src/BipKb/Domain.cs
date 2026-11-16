@@ -86,10 +86,10 @@ public sealed record Analysis(List<Finding> Findings);
 public sealed record Claim(string Id, string EntityId, string Statement, Contribution Contribution, string[] EvidenceIds,
     string[] RelatedClaimIds, SourceRole Role, bool NeedsReview, bool Obsolete = false, SourceContext? Context = null, KnowledgeOrigin Origin = KnowledgeOrigin.Extracted, KnowledgeState State = KnowledgeState.Proposed, string[]? Conditions = null);
 public sealed record SourceVersion(string Id, string SourceId, string RelativePath, string Hash, string CacheKey,
-    SourceRole Role, string[] EvidenceIds, string[] ClaimIds, bool Active, string[] Warnings, SourceContext? Context = null);
+    SourceRole Role, string[] EvidenceIds, string[] ClaimIds, bool Active, string[] Warnings, SourceContext? Context = null, bool Analyzed = true);
 public sealed record Decision(string Id, string ClaimId, string Action, string Reason, string Actor, string[] Supersedes, DateTimeOffset At, string EvidenceFingerprint = "");
 public sealed record IngestionReport(string Id, DateTimeOffset At, string SourceId, int Files, int Unchanged,
-    Dictionary<Contribution, int> Counts, string[] Warnings, string[] ClaimIds);
+    Dictionary<Contribution, int> Counts, string[] Warnings, string[] ClaimIds, string Mode = "analysis", int UnanalyzedFiles = 0);
 public sealed record Knowledge
 {
     public int Version { get; init; } = 2;

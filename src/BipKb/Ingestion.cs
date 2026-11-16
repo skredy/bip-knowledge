@@ -16,11 +16,12 @@ public static class Retrieval
 }
 public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<string>? progress=null)
 {
-    public async Task<IngestionReport> Run(string path,string? sourceId,SourceRole? role,bool reanalyze,CancellationToken ct)
+    public async Task<IngestionReport> Run(string path,string? sourceId,SourceRole? role,bool reanalyze,CancellationToken ct,bool analyze=true)
     {
         path=Path.GetFullPath(path);
         if(!File.Exists(path)&&!Directory.Exists(path))throw new IOException("Source inaccessible; existing knowledge remains unchanged.");
         progress?.Invoke("Préparation de l'ingestion (Ctrl+C pour interrompre et reprendre plus tard)");
+        progress?.Invoke(analyze?"Mode analyse complète avec Copilot":"Mode indexation locale — aucun appel Copilot ; analyse ciblée avec ask ou --analyze");
         workspace.EnsureWritable();
         var baseline=workspace.SemanticRevision;var configuration=Json.Hash(Json.Serialize(workspace.Config));
         var config=workspace.Config; var bindings=workspace.Bindings(); var k=workspace.Load(); var decisions=workspace.Decisions();
@@ -44,6 +45,10 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
         }
         var warnings=new List<string>(); var changed=new List<string>(); var unchanged=0; var counts=Enum.GetValues<Contribution>().ToDictionary(c=>c,c=>0);
         var seen=new HashSet<string>(); var groups=new Dictionary<SourceDescriptor,List<Unit>>();
+        var evidenceIds=k.Evidence.Select(e=>e.Id).ToHashSet();
+        var objectPositions=k.Objects.Select((o,i)=>(o.Id,i)).ToDictionary(p=>p.Id,p=>p.i);
+        var relationPositions=k.Relations.Select((r,i)=>(r.Id,i)).ToDictionary(p=>p.Id,p=>p.i);
+        var hasStaging=Directory.Exists(Path.Combine(workspace.Local,"staging"));
         var fileNumber=0;
         foreach(var file in files)
         {
@@ -57,7 +62,11 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
             var profile=k.Projects.SingleOrDefault(p=>p.Name.Equals(context.Project,StringComparison.OrdinalIgnoreCase));
             var key=Json.Hash(hash+Extractor.Version+config.AnalysisProfile+Json.Serialize(new{descriptor,definition.ExcelSheets,config.MaxFileBytes,project=profile})+effectiveRole);
             var previous=k.Sources.SingleOrDefault(s=>s.Active&&s.SourceId==sourceId&&s.RelativePath==relative);
-            if(!reanalyze&&previous?.CacheKey==key) { unchanged++; counts[Contribution.None]++; progress?.Invoke(fileLabel+" — inchangé, analyse réutilisée"); continue; }
+            if(!reanalyze&&previous?.CacheKey==key&&(!analyze||previous.Analyzed))
+            {
+                unchanged++;counts[Contribution.None]++;warnings.AddRange(previous.Warnings.Select(w=>relative+": "+w));
+                progress?.Invoke(fileLabel+(previous.Analyzed?" — inchangé, analyse réutilisée":" — inchangé, indexation réutilisée"));continue;
+            }
             var versionId=Json.Hash(sourceId+"/"+relative+key);
             // Parse the exact bytes that were hashed, not a second read of a changing source.
             var snapshot=Path.Combine(workspace.Local,"inputs",Guid.NewGuid().ToString("N")+Path.GetExtension(file));
@@ -69,15 +78,21 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
             finally { File.Delete(snapshot); }
             warnings.AddRange(extraction.Warnings.Select(w=>relative+": "+w));
             var evidence=extraction.Units.Select(u=>new Evidence(Json.Hash(versionId+u.Id),sourceId,relative,hash,u.Locator,u.Text,u.Parent)).ToArray();
-            foreach(var e in evidence)if(!k.Evidence.Any(x=>x.Id==e.Id))k.Evidence.Add(e);
+            foreach(var e in evidence)if(evidenceIds.Add(e.Id))k.Evidence.Add(e);
             var units=evidence.Select(e=>new Unit(e.Id,$"{sourceId}/{relative} {e.Locator}",e.Excerpt)).ToArray();
             var technical=TechnicalExtraction.Read(bytes,Path.GetExtension(file).ToLowerInvariant(),sourceId,context,evidence);
-            foreach(var item in technical.Objects){var oldObject=k.Objects.SingleOrDefault(o=>o.Id==item.Id);k.Objects.RemoveAll(o=>o.Id==item.Id);k.Objects.Add(oldObject==null?item:item with{EvidenceIds=oldObject.EvidenceIds.Concat(item.EvidenceIds).Distinct().ToArray()});}
-            foreach(var edge in technical.Relations){var prior=k.Relations.SingleOrDefault(r=>r.Id==edge.Id);k.Relations.RemoveAll(r=>r.Id==edge.Id);k.Relations.Add(prior==null?edge:edge with{EvidenceIds=prior.EvidenceIds.Concat(edge.EvidenceIds).Distinct().ToArray()});}
-            var duplicate=k.Sources.FirstOrDefault(s=>s.Active&&s.Hash==hash&&s.Role==effectiveRole&&s.Context==context&&s.Id!=previous?.Id);
+            foreach(var item in technical.Objects)
+                if(objectPositions.TryGetValue(item.Id,out var index))k.Objects[index]=item with{EvidenceIds=k.Objects[index].EvidenceIds.Concat(item.EvidenceIds).Distinct().ToArray()};
+                else {objectPositions[item.Id]=k.Objects.Count;k.Objects.Add(item);}
+            foreach(var edge in technical.Relations)
+                if(relationPositions.TryGetValue(edge.Id,out var index))k.Relations[index]=edge with{EvidenceIds=k.Relations[index].EvidenceIds.Concat(edge.EvidenceIds).Distinct().ToArray()};
+                else {relationPositions[edge.Id]=k.Relations.Count;k.Relations.Add(edge);}
+            var duplicate=k.Sources.FirstOrDefault(s=>s.Active&&s.Hash==hash&&s.Role==effectiveRole&&s.Context==context&&s.Id!=previous?.Id&&(!analyze||s.Analyzed));
             var fileClaims=new HashSet<string>();
+            var analysisComplete=analyze;
             if(duplicate!=null&&!reanalyze)
             {
+                analysisComplete=duplicate.Analyzed;
                 progress?.Invoke(fileLabel+" — contenu dupliqué, connaissances réutilisées");
                 foreach(var id in duplicate.ClaimIds)
                 {
@@ -89,17 +104,24 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
                 }
                 counts[Contribution.None]++; warnings.Add(relative+": duplicate content; not independent corroboration.");
             }
-            else
+            else if(analyze||hasStaging)
             {
                 var batches=Batches(units,9000).ToArray();var batchNumber=0;
+                analysisComplete=analyze||batches.Length>0;
                 foreach(var batch in batches)
                 {
                     var label=$"{fileLabel} — lot {++batchNumber}/{batches.Length}";
                     progress?.Invoke(label+" — recherche du contexte");
                     var existing=Retrieval.Select(k,context.Description+" "+context.Notes+" "+string.Join(" ",batch.Select(u=>u.Locator+" "+u.Text)),context:context);
                     var request=Request(k,decisions,effectiveRole,batch,existing,"extract",context);
-                    Analysis analysis;
-                    if(extraction.Image)
+                    Analysis? analysis;
+                    if(!analyze)
+                    {
+                        analysis=ReadCached(request,key);
+                        if(analysis==null){analysisComplete=false;continue;}
+                        progress?.Invoke(label+" — résultat intermédiaire réutilisé");
+                    }
+                    else if(extraction.Image)
                     {
                         var imageSnapshot=Path.Combine(workspace.Local,"inputs",hash+Path.GetExtension(file));
                         await File.WriteAllBytesAsync(imageSnapshot,bytes,ct);
@@ -114,13 +136,21 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
                     }
                 }
             }
+            if(extraction.Image&&!analysisComplete)
+            {
+                const string warning="Image référencée uniquement, contenu visuel non analysé. Utilisez --analyze sur cette image.";
+                extraction.Warnings.Add(warning);warnings.Add(relative+": "+warning);
+            }
             if(previous!=null) k.Sources[k.Sources.IndexOf(previous)]=previous with{Active=false};
             k.Sources.RemoveAll(s=>s.Id==versionId);
-            k.Sources.Add(new(versionId,sourceId,relative,hash,key,effectiveRole,evidence.Select(e=>e.Id).ToArray(),fileClaims.Order().ToArray(),true,extraction.Warnings.ToArray(),context));
+            k.Sources.Add(new(versionId,sourceId,relative,hash,key,effectiveRole,evidence.Select(e=>e.Id).ToArray(),fileClaims.Order().ToArray(),true,extraction.Warnings.ToArray(),context,analysisComplete));
             var groupKey=descriptor with{Role=effectiveRole};
-            if(!groups.TryGetValue(groupKey,out var groupUnits)){groupUnits=[];groups.Add(groupKey,groupUnits);}
-            groupUnits.AddRange(units);
-            progress?.Invoke(fileLabel+" — traité");
+            if(analyze)
+            {
+                if(!groups.TryGetValue(groupKey,out var groupUnits)){groupUnits=[];groups.Add(groupKey,groupUnits);}
+                groupUnits.AddRange(units);
+            }
+            progress?.Invoke(fileLabel+(analyze?" — traité":" — indexé localement"));
         }
         progress?.Invoke("Vérification des sources supprimées et des preuves");
         // Deletions are inferred only from a successful full-root inventory and actual absence.
@@ -155,7 +185,8 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
                 }
             }
         RefreshObsolete(k);
-        var report=new IngestionReport(Guid.NewGuid().ToString("N"),DateTimeOffset.UtcNow,sourceId,files.Count,unchanged,counts,warnings.ToArray(),changed.Distinct().Order().ToArray());
+        var unanalyzed=k.Sources.Count(s=>s.Active&&s.SourceId==sourceId&&seen.Contains(s.RelativePath)&&!s.Analyzed);
+        var report=new IngestionReport(Guid.NewGuid().ToString("N"),DateTimeOffset.UtcNow,sourceId,files.Count,unchanged,counts,warnings.ToArray(),changed.Distinct().Order().ToArray(),analyze?"analysis":"index",unanalyzed);
         k.Reports.Add(report); ct.ThrowIfCancellationRequested();
         progress?.Invoke("Enregistrement des connaissances et du rapport");
         using(var publication=workspace.Lock())
@@ -164,6 +195,7 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
             workspace.Save(k);
         }
         // The index is disposable. A process interruption here is repaired by search/import.
+        if(!analyze){progress?.Invoke("Construction de l'index de recherche local");new SearchEngine(workspace).Refresh();}
         progress?.Invoke($"Ingestion terminée : {files.Count} fichier(s), dont {unchanged} inchangé(s)");
         return report;
     }
@@ -191,6 +223,12 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
         var analysis=await analyzer.Analyze(request,image,ct);
         progress?.Invoke(label+" — réponse reçue, validation des preuves");
         CopilotAnalyzer.Validate(analysis,request); Json.Write(path,analysis); return analysis;
+    }
+    private Analysis? ReadCached(AnalysisRequest request,string salt)
+    {
+        var path=Path.Combine(workspace.Local,"staging",Json.Hash(salt+Json.Serialize(request))+".json");
+        if(!File.Exists(path))return null;
+        var saved=Json.Read<Analysis>(File.ReadAllText(path));CopilotAnalyzer.Validate(saved,request);return saved;
     }
     private static IEnumerable<Unit[]> Batches(Unit[] units,int max)
     {
@@ -224,7 +262,8 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
         {
             var kind=contribution==Contribution.Contradiction?RelationKind.Contradicts:contribution==Contribution.Evolution?RelationKind.Replaces:RelationKind.MapsTo;
             var relation=new KnowledgeRelation(Json.Hash(id+kind+target),id,target,kind,claim.EvidenceIds,KnowledgeOrigin.Inferred);
-            k.Relations.RemoveAll(r=>r.Id==relation.Id);k.Relations.Add(relation);
+            var relationIndex=k.Relations.FindIndex(r=>r.Id==relation.Id);
+            if(relationIndex>=0)k.Relations[relationIndex]=relation;else k.Relations.Add(relation);
         }
         return claim;
     }

@@ -34,6 +34,12 @@ L'analyse distante ne garde pas le verrou d'écriture. Elle travaille à partir 
 
 Le cache dépend du contenu, de l'extracteur, du profil d'analyse et du contexte effectif du fichier. Une modification de configuration d'une source indépendante ne force pas sa réanalyse. `--reanalyze` réévalue volontairement une source. Une source inaccessible n'est pas supprimée ; seules une inspection complète de sa racine et une absence confirmée rendent ses preuves historiques.
 
+La CLI 0.3.9 indexe localement par défaut : extraction et objets/relations techniques, puis publication et construction de FTS, sans appel au modèle ni rapprochement sémantique global. `--analyze` active l'analyse complète ; `--reanalyze` la force. Le statut `SourceVersion.Analyzed` distingue une extraction seule d'une analyse complète du fichier ; sa valeur par défaut est vraie pour les mémoires antérieures, produites par le parcours d'analyse. Les preuves et identifiants ne changent pas simplement parce qu'on passe d'un mode à l'autre. Un fichier seulement indexé n'est donc pas sauté lors d'un futur `--analyze`.
+
+Les résultats intermédiaires déjà validés sont récupérés en mode local lorsque la même demande peut être reconstruite, sans nouvel appel. Les assertions publiées et décisions restent actives pour les sources inchangées ; une source modifiée rend ses anciennes preuves historiques. Une image sans analyse visuelle est signalée explicitement. Les rapports et l'interface distinguent indexation et analyse. `ask` exploite les extraits locaux via les recherches bornées existantes ; il ne déclenche pas l'analyse intégrale des fichiers et ne transforme pas ses réponses en nouvelles assertions.
+
+L'accumulation des preuves et des objets techniques utilise des index en mémoire par identifiant, pour éviter de rescanner toute la collection pour chaque symbole d'un gros dépôt. La construction SQLite termine l'ingestion locale ; si elle est interrompue après publication, la mémoire complète reste reconstruisible par recherche/import.
+
 ## Index et recherche
 
 SQLite utilise WAL, FTS5, des index de périmètre et un graphe d'adjacence. Une révision déjà indexée n'entraîne aucun chargement du corpus pour une recherche CLI. Le rafraîchissement compare les empreintes des documents et ne réécrit que les lignes FTS modifiées. Les suppressions FTS passent par un `rowid` indexé : aucune recherche linéaire par identifiant pour chaque insertion.

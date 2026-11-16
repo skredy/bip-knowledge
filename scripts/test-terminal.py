@@ -91,14 +91,16 @@ def main():
         (corpus / "Facture.cs").write_text("public record FactureDto(int Id, int Statut);", encoding="utf-8")
         shutil.copy(repo / "tests/BipKb.Tests/Fixtures/study.xls", corpus / "etude.xls")
 
-        def cli(*words, workspace=kb, expected=0):
-            result = subprocess.run(command + list(map(str, words)) + ["--workspace", str(workspace), "--json"], capture_output=True, text=True, timeout=40)
+        def cli(*words, workspace=kb, expected=0, analyze=True):
+            options = ["--analyze"] if analyze and words[0] == "--ingest" else []
+            result = subprocess.run(command + list(map(str, words)) + options + ["--workspace", str(workspace), "--json"], capture_output=True, text=True, timeout=40)
             assert result.returncode == expected, result.stdout + result.stderr
             assert '[ingestion ' not in result.stderr, result.stderr
             return json.loads(result.stdout if expected == 0 else result.stderr)
 
         def terminal(*words):
-            return Terminal(command + list(map(str, words)) + ["--workspace", str(kb)])
+            options = ["--analyze"] if words[0] == "--ingest" else []
+            return Terminal(command + list(map(str, words)) + options + ["--workspace", str(kb)])
 
         cli("init")
         fixture = root / "copilot-fixture"
@@ -222,6 +224,22 @@ print(json.dumps({'type':'result','exitCode':0}))
         cli("source", "bind", "etude-sql", corpus, workspace=other)
         assert cli("--ingest", corpus, workspace=other)["unchanged"] == 3
         assert cli("search", "Facture", workspace=other)["hits"]
+        # Default ingestion must work even when Copilot cannot be launched, then allow targeted analysis.
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config["copilotExecutable"] = str(root / "copilot-not-installed")
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        local_file = corpus / "local.md"
+        local_file.write_text("Une facture peut contenir un reliquat.", encoding="utf-8")
+        before_calls = (root / "calls").read_text()
+        indexed = cli("--ingest", local_file, analyze=False)
+        assert indexed["mode"] == "index" and indexed["unanalyzedFiles"] == 1
+        assert (root / "calls").read_text() == before_calls
+        assert cli("search", "reliquat")["hits"]
+        config["copilotExecutable"] = str(fixture)
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        analyzed = cli("--ingest", local_file)
+        assert analyzed["mode"] == "analysis" and analyzed["unanalyzedFiles"] == 0
+        assert (root / "calls").read_text() != before_calls
         print("PASS: project setup, SQL/XLS/C# ingestion, invalid fields, confirmation, analysis failure, retry without retyping, unchanged import, file override, cancellation, search/context, export/import/remap.")
         print("Copilot was simulated. Terminal coverage is Linux; xUnit form tests are included in Windows CI.")
 

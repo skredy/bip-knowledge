@@ -10,7 +10,7 @@ public static class Cli
     public static async Task<int> Run(string[] args)
     {
         if(args.Length==1 && args[0] is "--help" or "-h")args=["help"];
-        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.3.8");return 0;}
+        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.3.9");return 0;}
         using var cancel=new CancellationTokenSource();
         Console.CancelKeyPress+=(_,e)=>{e.Cancel=true;cancel.Cancel();};
         try
@@ -39,9 +39,11 @@ bip-kb — Mémoire technique sourcée
   --ingest <file-or-directory> | ingest <file-or-directory>
       (automatic SQL, Excel, code, JSON, image and Draw.io detection)
   --ingest --file <file> | --path <directory> | --image <image> | --schema <drawio>
-      [--source <id>] [--role <role>] [--reanalyze]
+      [--source <id>] [--role <role>] [--analyze | --reanalyze]
       [--describe] [--context-file <json>] [--non-interactive]
-      First import: guided context; /cancel aborts before analysis.
+      Default: local indexing, no Copilot call. --analyze: full model analysis.
+      --reanalyze: force full model analysis, bypassing cached answers.
+      First import: guided context; /cancel aborts before ingestion.
   search <query> | ask <question> | context <task> [--output <file>]
   report <ingestion-id> | review
   review <claim-id> --action accept|reject|distinct|replace --reason <text> --actor <name>
@@ -87,12 +89,13 @@ All commands: --workspace <directory>, --json. Quote multiword arguments.
                 case "doctor":result=await analyzer.Doctor(parsed.Has("live"),cancel.Token);break;
                 case "ingest":
                     var input=parsed.IngestionInput();
+                    var analyze=parsed.Has("analyze")||parsed.Has("reanalyze");
                     var source=await new SourceSetup(workspace,Console.In,Console.Error,!Console.IsInputRedirected&&!parsed.Has("non-interactive")&&!parsed.Has("json"))
-                        .Prepare(input,parsed.Get("source"),role,parsed.Get("context-file"),parsed.Has("describe"),cancel.Token);
+                        .Prepare(input,parsed.Get("source"),role,parsed.Get("context-file"),parsed.Has("describe"),cancel.Token,analyze);
                     await using(var progress=new IngestionProgress(parsed.Has("json")?null:Console.Error))
                     {
                         analyzer.Progress=progress.Report;
-                        try{result=await new Ingestor(workspace,analyzer,progress.Report).Run(input,source,null,parsed.Has("reanalyze"),cancel.Token);}
+                        try{result=await new Ingestor(workspace,analyzer,progress.Report).Run(input,source,null,parsed.Has("reanalyze"),cancel.Token,analyze);}
                         finally{analyzer.Progress=null;}
                     }
                     break;
@@ -139,7 +142,7 @@ public sealed class Arguments
     public List<string> Words {get;}=[];
     public Arguments(string[] args)
     {
-        string[] switches=["json","ingest","reanalyze","live","describe","non-interactive","dry-run","confirm","history"];string[] values=["workspace","file","path","image","schema","source","role","output","port","action","reason","actor","context-file","project","domain","task","message","name","count","intent"];
+        string[] switches=["json","ingest","analyze","reanalyze","live","describe","non-interactive","dry-run","confirm","history"];string[] values=["workspace","file","path","image","schema","source","role","output","port","action","reason","actor","context-file","project","domain","task","message","name","count","intent"];
         for(var i=0;i<args.Length;i++)
         {
             if(!args[i].StartsWith("--")){Words.Add(args[i]);continue;}

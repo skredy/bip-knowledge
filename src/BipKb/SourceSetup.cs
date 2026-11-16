@@ -8,7 +8,7 @@ public sealed class SourceSetup(Workspace workspace,TextReader input,TextWriter 
         var relative=Path.GetRelativePath(root,path);
         return relative!=".."&&!relative.StartsWith(".."+Path.DirectorySeparatorChar)&&!Path.IsPathRooted(relative);
     }
-    public async Task<string> Prepare(string path,string? sourceId,SourceRole? role,string? contextFile,bool describe,CancellationToken ct)
+    public async Task<string> Prepare(string path,string? sourceId,SourceRole? role,string? contextFile,bool describe,CancellationToken ct,bool analyze=true)
     {
         path=Path.GetFullPath(path);
         if(!File.Exists(path)&&!Directory.Exists(path))throw new IOException("Source inaccessible ; aucun changement effectué.");
@@ -124,10 +124,10 @@ public sealed class SourceSetup(Workspace workspace,TextReader input,TextWriter 
         output.WriteLine("Source : "+sourceId);output.WriteLine(Json.Serialize(supplied));
         if(interactive)
         {
-            if(!Confirm("Enregistrer ce contexte et analyser ?",ct))throw new OperationCanceledException("Ingestion annulée avant enregistrement.");
+            if(!Confirm(analyze?"Enregistrer ce contexte et analyser ?":"Enregistrer ce contexte et indexer localement (sans Copilot) ?",ct))throw new OperationCanceledException("Ingestion annulée avant enregistrement.");
         }
         ct.ThrowIfCancellationRequested();workspace.ConfigureSource(sourceId,root,path,supplied);
-        output.WriteLine("Contexte enregistré. Si l'analyse échoue, relancez la même commande : ces réponses seront réutilisées.");
+        output.WriteLine("Contexte enregistré. Si l'ingestion échoue, relancez la même commande : ces réponses seront réutilisées.");
         if(new Projects(workspace).Find(supplied.Context.Project)==null)output.WriteLine("Fiche globale non configurée : lancez bip-kb project setup pour préparer les enquêtes et conversations.");
         return sourceId;
     }

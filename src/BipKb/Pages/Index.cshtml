@@ -30,7 +30,7 @@
 }else if(Model.View=="ingestions"){
 <h2>Ingestions publiées</h2>
 @foreach(var report in Model.Knowledge.Reports.OrderByDescending(r=>r.At)){
-<section><h3>@report.SourceId — @report.At.ToString("u")</h3><small>@report.Id</small><p>@report.Files fichiers, @report.Unchanged inchangés.</p>
+<section><h3>@report.SourceId — @report.At.ToString("u")</h3><small>@report.Id</small><p>@(report.Mode == "index" ? "Indexation locale" : "Analyse Copilot") : @report.Files fichiers, @report.Unchanged inchangés. @report.UnanalyzedFiles fichiers sans analyse Copilot préalable.</p>
 @foreach(var count in report.Counts.Where(c=>c.Value>0)){<span>@count.Key : @count.Value · </span>}
 @foreach(var warning in report.Warnings){<p class="warning">@warning</p>}
 </section>}

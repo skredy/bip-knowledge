@@ -168,3 +168,27 @@ Les tests de réponse distinguent syntaxe JSON et désérialisation, imposent le
 Un test multiplateforme avec un véritable processus Node simule la CLI : test de connexion dédié, premier JSON d'analyse tronqué, seconde réponse JSONL complète avec LF mal échappé dans le JSON métier, validation des preuves puis publication. Il passe ici ; il est exécuté sous Windows si Node est installé. Ce test simule le modèle et ne remplace pas une analyse professionnelle réelle.
 
 Le paquet final **0.3.8 installé**, dont l'assembly est comparé à la construction Release, passe le parcours terminal complet. Celui-ci inclut maintenant un premier échec fournisseur, puis une relance sans saisie avec réponse mal formée et seconde tentative valide, le suivi, l'incrémentalité et l'export/import. L'accès API GitHub de cette session refuse la consultation des résultats CI distants ; aucune réussite de la CI Windows n'est revendiquée ici.
+
+## Version 0.3.9 — indexation locale et analyse au choix
+
+L'utilisateur a choisi l'indexation locale du gros dépôt, avec analyse Copilot à la demande et analyse complète explicite des documents importants. La CLI indexe désormais sans modèle par défaut ; `--analyze` active le parcours exhaustif, et `--reanalyze` le force. Un changement de mode ne renouvelle pas les identifiants de preuve. Les rapports et l'interface distinguent les deux modes ; les anciennes mémoires restent reconnues comme issues d'une analyse.
+
+**143 tests validés**, dont huit scénarios propres au mode local. La suite générale passe avec quatre tests ignorés ici (Copilot authentifié et trois tests Windows) ; le scénario supplémentaire de compatibilité des anciennes mémoires passe aussi. Les nouveaux tests couvrent SQL/C#/Excel/Draw.io sans modèle, recherche des filtres SQL bruts, question avec citations à partir d'un index sans assertions, analyse ultérieure d'un Excel et d'un Draw.io, absence de doublons de preuves, reprise des lots d'une analyse interrompue, export/import des statuts, préservation des décisions, changement de source et avertissement visuel sur les images.
+
+Le **paquet 0.3.9 installé** passe le parcours terminal complet avec l'analyse explicite, puis un parcours d'indexation par défaut avec un exécutable Copilot inexistant. La recherche fonctionne sans modèle ; remettre la CLI simulée et utiliser `--analyze` enrichit le fichier déjà indexé sans nouvelle saisie du contexte. La validation authentifiée d'un corpus professionnel reste distincte de ces tests.
+
+Mesure reproductible avec `python3 scripts/benchmark-ingestion.py --dotnet /workspace/.dotnet/dotnet`, sous Linux, compilation Debug :
+
+| Mesure | Résultat |
+|---|---:|
+| Fichiers synthétiques C#/SQL | 2 212 |
+| Taille totale des sources | 753 074 octets |
+| Documents indexés | 45 778 |
+| Arêtes de recherche | 284 417 |
+| Première ingestion et construction de SQLite | 41,003 s |
+| Réingestion inchangée | 8,202 s |
+| Recherche, processus compris | 0,430 s |
+| Recherche mesurée dans l'outil | 253 ms |
+| Appels Copilot | 0 |
+
+Ce corpus contient de petits modèles C# et des procédures/tables SQL ; ces temps ne prédisent pas ceux d'un dépôt professionnel plus volumineux ou d'un poste Windows. Le gain principal vérifiable est la suppression de tous les appels au modèle pendant l'indexation. Le coût et la couverture du mode `--analyze` restent ceux d'une analyse exhaustive ; l'indexation seule ne constitue pas une interprétation métier ou visuelle préalable de tous les documents.

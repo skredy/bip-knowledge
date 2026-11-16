@@ -2,11 +2,11 @@
 
 Assistant local de connaissance technique : ingestion de documents et de code, mémoire sourcée, recherche, enquêtes avec Copilot CLI et dossiers de travail persistants. .NET 10, SQLite FTS5, Razor Pages, partage par Git et MCP en lecture seule.
 
-**Version 0.3.8.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
+**Version 0.3.9.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
 
 ## Installer ou mettre à jour
 
-Prérequis : SDK .NET 10 (incluant ASP.NET Core), Git, Copilot CLI authentifié. Sous Windows, bip-kb détecte la distribution native `copilot.exe` et les installations npm `@github/copilot` (via Node.js). Le seul lanceur `copilot.ps1` ajouté par l’extension VS Code ne suffit pas : la CLI autonome doit être installée.
+Prérequis : SDK .NET 10 (incluant ASP.NET Core) et Git. Copilot CLI authentifié est nécessaire pour `ask`, les enquêtes et `--analyze`, mais pas pour indexer ou rechercher localement. Sous Windows, bip-kb détecte la distribution native `copilot.exe` et les installations npm `@github/copilot` (via Node.js). Le seul lanceur `copilot.ps1` ajouté par l’extension VS Code ne suffit pas : la CLI autonome doit être installée.
 
 ```powershell
 ./scripts/install.ps1 -ToolPath "$env:USERPROFILE/.bip-tools"
@@ -20,7 +20,7 @@ Sous Linux :
 dotnet restore --locked-mode
 dotnet test --no-restore
 dotnet pack src/BipKb -c Release --no-restore -o artifacts
-dotnet tool install BipKb --version 0.3.8 --add-source ./artifacts --tool-path ./artifacts/tools
+dotnet tool install BipKb --version 0.3.9 --add-source ./artifacts --tool-path ./artifacts/tools
 ```
 
 ### Si vous avez une base 0.1 ou 0.2
@@ -65,6 +65,31 @@ bip-kb project summary --project "Migration BIP"
 ```
 
 Conserver les `id` lors des modifications. Les noms de projet/domaine doivent correspondre au contexte des sources. Les synthèses sont calculées depuis les données et citent leurs dépendances ; elles ne sont pas des preuves indépendantes.
+
+## Choisir entre indexation rapide et analyse complète
+
+**Depuis la 0.3.9, une ingestion sans option indexe localement, sans appeler Copilot.** C'est le parcours conseillé pour un dépôt de plusieurs milliers de fichiers. Les extracteurs conservent les unités sourcées, les coordonnées Excel, les objets/connexions Draw.io, les symboles et relations techniques SQL/C# ; ces éléments sont directement recherchables. Aucune nouvelle interprétation métier n'est présentée comme ayant été produite par le modèle.
+
+```powershell
+# Tout le code, sans appel Copilot :
+bip-kb --ingest "C:/repos/bip/src"
+bip-kb search "commande statut"
+bip-kb ask "Comment le statut d'une commande est-il calculé ?"
+
+# Documents importants, à analyser avec Copilot :
+bip-kb --ingest "C:/etudes/migration.xlsx" --analyze
+bip-kb --ingest "C:/etudes/modele.drawio" --analyze
+# Fonctionne aussi pour un fichier ou sous-dossier déjà indexé :
+bip-kb --ingest "C:/repos/bip/src/Commandes" --analyze
+```
+
+Le choix s'applique à la commande, pas au format : Excel et Draw.io peuvent être indexés rapidement ou analysés entièrement. `ask` et les dossiers de recherche utilisent ensuite Copilot sur des résultats bornés, avec citations et recherches complémentaires ; ils ne lancent pas une analyse du dépôt entier et ne réingèrent pas automatiquement leurs réponses comme des faits. `search` et `context` restent locaux. Un profil de projet est nécessaire pour `ask` (`project setup` si nécessaire).
+
+`--analyze` complète l'analyse des fichiers qui n'ont été qu'indexés, tout en réutilisant les analyses à jour. **`--reanalyze` force l'analyse Copilot et contourne le cache : ne pas le conserver pour passer en mode rapide.** L'analyse exhaustive conserve son coût par lot ; la 0.3.9 ne promet pas de l'accélérer pour tout un dépôt.
+
+Les connaissances et décisions déjà publiées sont conservées si leurs sources sont inchangées. Les lots d'une analyse interrompue sont récupérés quand leur demande correspond encore exactement. Une modification de source peut rendre les anciennes conclusions historiques, même en indexation locale. Le rapport distingue `mode: "index"` et `mode: "analysis"`, avec `unanalyzedFiles` ; ce compteur n'est pas une erreur du mode local. Les images indexées seules sont explicitement signalées comme non analysées visuellement : utiliser `--analyze` pour leur contenu.
+
+Aucune migration n'est nécessaire depuis la 0.3.x. Les membres d'une équipe doivent mettre à jour leur outil avant de lire une mémoire enrichie avec ces nouveaux indicateurs. Un processus déjà lancé conserve son ancien comportement : l'interrompre avec Ctrl+C puis relancer après mise à jour pour changer de mode.
 
 ### Si PowerShell trouve Copilot mais bip-kb ne peut pas le lancer
 
@@ -130,14 +155,14 @@ bip-kb --ingest C:/Documents/Facturation
 bip-kb --ingest C:/Documents/Facturation/tables.sql
 bip-kb --ingest C:/Documents/Facturation/etude.xls
 bip-kb --ingest C:/Documents/Facturation/modele.drawio
-bip-kb --ingest C:/Documents/Facturation/schema.png
+bip-kb --ingest C:/Documents/Facturation/schema.png --analyze
 ```
 
-Pas de `source bind` préalable. Le premier import inventorie les fichiers, propose un contexte existant si l'aperçu présente suffisamment de termes communs et demande ce qui manque : identifiant de source, projet, sujet métier, rôle (`legacy`, `target`, `current`), statut (`proposal`, `validated`, `observed`, `historical`), description et notes. Vous confirmez avant tout appel Copilot. `/cancel` ou `non` annule la préparation.
+Pas de `source bind` préalable. Le premier import inventorie les fichiers, propose un contexte existant si l'aperçu présente suffisamment de termes communs et demande ce qui manque : identifiant de source, projet, sujet métier, rôle (`legacy`, `target`, `current`), statut (`proposal`, `validated`, `observed`, `historical`), description et notes. Vous confirmez avant l'ingestion ; le récapitulatif précise indexation locale ou analyse Copilot. `/cancel` ou `non` annule la préparation.
 
 L'**identifiant de source** est un nom court, par exemple `etude-sql` ou `code_actuel` : uniquement lettres sans accent, chiffres, `-` et `_`. Le nom du dossier sert à proposer un identifiant valide et disponible. Une saisie invalide ou un identifiant déjà utilisé est corrigé immédiatement, avant les questions de contexte. Les noms du projet, les sujets métier et les descriptions acceptent espaces et accents.
 
-Le contexte confirmé est enregistré **avant l'appel à Copilot**. Si l'analyse échoue, relancer la même commande réutilise les réponses, y compris les descriptions longues. `--describe` sert uniquement à modifier ce contexte. Une faute dans la réponse oui/non est redemandée ; elle n'annule pas le formulaire.
+Le contexte confirmé est enregistré **avant le traitement**. Si l'analyse échoue, relancer la même commande réutilise les réponses, y compris les descriptions longues. `--describe` sert uniquement à modifier ce contexte. Une faute dans la réponse oui/non est redemandée ; elle n'annule pas le formulaire.
 
 Le contexte est réutilisé ensuite. `--describe` le modifie pour le chemin sélectionné uniquement ; une exception sur un fichier ou sous-dossier ne modifie pas ses voisins. `--reanalyze` contourne le cache. Les projets restent séparés ; les domaines explicitement liés peuvent être explorés sans être fusionnés.
 
