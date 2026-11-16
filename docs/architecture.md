@@ -26,6 +26,8 @@ Les preuves portent source logique, chemin relatif, version, emplacement et extr
 
 Le chargement vérifie les parents, cycles, empreintes et références. Deux écritures concurrentes différentes sur un même identifiant nécessitent une résolution explicite ; aucune date ne donne silencieusement priorité à l'une. Une résolution est validée avant publication. Les fichiers `decisions/` conservent leur propre chaîne de remplacement et leurs conflits d'arbitrage.
 
+Les écritures de JSON et de lots utilisent un fichier temporaire unique voisin puis un remplacement atomique. Les refus d'accès et violations de partage sont réessayés quatre fois au maximum (1,5 seconde d'attente cumulée), sans suppression préalable ni modification des droits de la destination. Les autres erreurs E/S échouent immédiatement. Un échec de nettoyage du temporaire ne remplace pas l'erreur d'écriture.
+
 Un cache local matérialisé évite de rejouer tout le journal. Il suppose que les anciens lots sont immuables ; `import` invalide ce cache et vérifie leur intégrité. Ne pas éditer les lots à la main. Après une fusion Git, exécuter `import`.
 
 L'analyse distante ne garde pas le verrou d'écriture. Elle travaille à partir d'une révision et stocke ses résultats intermédiaires validés sous `.local/staging`. Le verrou est acquis uniquement pour publier ; un changement concurrent de mémoire/configuration interrompt cette publication. Relancer l'ingestion réutilise les réponses dont la demande est identique. La révision précédente reste consultable pendant l'analyse.
@@ -59,6 +61,8 @@ Les unités et références sont bornées à 18 000 caractères de demande struc
 La sortie machine JSONL est sélectionnée si `--output-format` est annoncé dans l'aide. Le dernier événement `assistant.message` complet fournit la réponse ; les deltas et événements d'outils sont ignorés. Un événement final `result` avec `exitCode: 0` est requis en plus du succès du processus. Un flux incomplet ou invalide est rejeté, sans repli silencieux vers le texte. Les anciennes CLI sans cette option conservent la sortie texte.
 
 Le JSON métier peut être entouré d'un bloc Markdown complet. Si sa lecture échoue, seuls les LF, CR et tabulations littéraux à l'intérieur des chaînes sont encodés sans modifier leur valeur. Aucun champ, délimiteur ni identifiant n'est inventé ; les échappements ambigus restent rejetés. Le JSON est ensuite strictement désérialisé et ses références validées contre les éléments fournis. Cela établit la provenance, pas la vérité métier ni la compréhension visuelle. Une image sans capacité de pièce jointe provoque une erreur explicite.
+
+Une erreur de syntaxe ou de désérialisation du résultat d'ingestion autorise une seule nouvelle demande du même lot avec un rappel du format. Les réponses rejetées ne sont pas incluses dans cette nouvelle demande. La validation des références reste obligatoire et n'entraîne aucune réparation automatique. Après refus définitif, un diagnostic local contient les réponses rejetées et le motif ; il n'est ni indexé, ni exporté, ni envoyé à Copilot. L'affichage d'erreur ne reproduit pas le contenu du modèle. `doctor --live` utilise un échange de connexion dédié et ne prétend pas valider un corpus.
 
 L'interface écoute uniquement sur 127.0.0.1, vérifie le Host et utilise antiforgery sur les POST. Razor encode les contenus. Ce n'est pas un serveur multi-utilisateur ; le partage concerne les fichiers Git.
 

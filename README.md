@@ -2,7 +2,7 @@
 
 Assistant local de connaissance technique : ingestion de documents et de code, mémoire sourcée, recherche, enquêtes avec Copilot CLI et dossiers de travail persistants. .NET 10, SQLite FTS5, Razor Pages, partage par Git et MCP en lecture seule.
 
-**Version 0.3.7.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
+**Version 0.3.8.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
 
 ## Installer ou mettre à jour
 
@@ -20,7 +20,7 @@ Sous Linux :
 dotnet restore --locked-mode
 dotnet test --no-restore
 dotnet pack src/BipKb -c Release --no-restore -o artifacts
-dotnet tool install BipKb --version 0.3.7 --add-source ./artifacts --tool-path ./artifacts/tools
+dotnet tool install BipKb --version 0.3.8 --add-source ./artifacts --tool-path ./artifacts/tools
 ```
 
 ### Si vous avez une base 0.1 ou 0.2
@@ -99,6 +99,18 @@ Le nettoyage réessaie brièvement les fichiers verrouillés et traite les fichi
 À partir de la 0.3.6, bip-kb demande la sortie machine `--output-format json` lorsque la CLI la propose. `doctor` indique `responseFormat: "jsonl"` (sinon `"text"` pour les anciennes CLI). Le lecteur utilise le dernier message assistant complet et exige une confirmation de fin réussie ; les événements de progression ne deviennent pas des réponses.
 
 Si le JSON produit par le modèle contient un retour à la ligne ou une tabulation non échappés dans une chaîne, bip-kb en corrige uniquement l'encodage, en conservant le texte. Les champs attendus et références restent contrôlés ; les autres erreurs ne sont pas réparées arbitrairement. Une mise à jour ne nécessite aucune nouvelle saisie du contexte : vérifier `bip-kb doctor --live`, puis relancer la même ingestion.
+
+### Une réponse d'analyse reste non conforme
+
+La 0.3.8 distingue un JSON syntaxiquement invalide d'un JSON lisible dont la structure ne respecte pas le contrat. Pour l'ingestion, une seule nouvelle tentative est faite à partir de la demande originale, avec un rappel du format. La réponse refusée n'est jamais réinjectée comme instruction. Les références inventées restent rejetées, sans tentative de réparation.
+
+Si le refus persiste, le message indique un diagnostic sous `.local/copilot-diagnostics/`. Ce fichier contient les réponses refusées, leur motif et l'empreinte de la demande ; il peut contenir des extraits privés. Il reste local, hors export et ignoré par Git : ne pas le publier ni le partager tel quel. Une impossibilité d'écrire ce diagnostic ne masque pas l'erreur d'analyse. Relancer sans `--reanalyze` permet de réutiliser les lots déjà validés.
+
+`doctor --live` utilise désormais un test de connexion dédié. Sa confirmation signifie qu'un échange et la lecture JSON ont réussi ; elle ne valide pas à elle seule la compréhension du corpus ou le contrat d'ingestion.
+
+### Refus d'accès pendant l'enregistrement d'un JSON
+
+L'écriture conserve un fichier temporaire voisin puis le remplace atomiquement. La 0.3.8 réessaie au maximum quatre fois les refus d'accès et violations de partage, avec 1,5 seconde d'attente cumulée. Aucun droit ni attribut du fichier de destination n'est changé ; il n'est jamais supprimé pour contourner un verrou. Un refus persistant indique le chemin et le code système. Les autres erreurs E/S ne sont pas réessayées. Le script d'installation continue d'exiger des tests réussis.
 
 ### Suivre une ingestion longue
 

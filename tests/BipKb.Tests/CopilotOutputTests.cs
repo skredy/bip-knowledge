@@ -68,10 +68,10 @@ public class CopilotOutputTests
     {Assert.Throws<InvalidDataException>(()=>CopilotOutput.JsonLines(stream));}
 
     [UnixFact]
-    public async Task DoctorLiveParsesJsonLinesAndLiteralNewlineThroughRealProcess()
+    public async Task DoctorLiveParsesJsonLinesThroughRealProcess()
     {
         using var s=new Sandbox();var script=Path.Combine(s.Root,"copilot-json-fixture");
-        var answer="{\"text\":\"Connexion\nconfirmée\",\"claimIds\":[],\"uncertainties\":[]}";
+        var answer="{\"text\":\"ok\",\"claimIds\":[],\"uncertainties\":[]}";
         File.WriteAllText(script,"""
 #!/bin/sh
 case "$1" in
@@ -84,6 +84,6 @@ cat <<'JSONL'
         if(!OperatingSystem.IsWindows())File.SetUnixFileMode(script,UnixFileMode.UserRead|UnixFileMode.UserWrite|UnixFileMode.UserExecute);
         Json.Write(Path.Combine(s.Workspace.Root,"bip.json"),s.Workspace.Config with{CopilotExecutable=script});
         var result=JsonSerializer.SerializeToElement(await new CopilotAnalyzer(s.Workspace).Doctor(true,default),Json.Options);
-        Assert.Equal("jsonl",result.GetProperty("responseFormat").GetString());Assert.Equal("Connexion\nconfirmée",result.GetProperty("completion").GetProperty("text").GetString());
+        Assert.Equal("jsonl",result.GetProperty("responseFormat").GetString());Assert.Equal("Connexion Copilot et lecture de la réponse JSON vérifiées.",result.GetProperty("completion").GetProperty("text").GetString());
     }
 }

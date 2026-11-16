@@ -5,6 +5,7 @@ namespace BipKb;
 
 public static class CopilotOutput
 {
+    private static readonly JsonSerializerOptions ResponseOptions=new(Json.Options){RespectRequiredConstructorParameters=true};
     public static string Unfence(string value)
     {
         var text=value.Trim().TrimStart('\uFEFF').Trim();var newline=text.IndexOf('\n');
@@ -19,16 +20,29 @@ public static class CopilotOutput
     public static T Read<T>(string response)
     {
         var text=Unfence(response);
-        try{return Json.Read<T>(text);}
+        JsonDocument document;
+        try{document=JsonDocument.Parse(text);}
         catch(JsonException)
         {
             // Preserve characters, identifiers and values. Only encode literal LF/CR/TAB inside strings.
             // Never invent missing braces, quotes, fields, citations, or reinterpret arbitrary prose.
-            var normalized=EscapeLiteralWhitespace(text);
-            try{return Json.Read<T>(normalized);}
+            text=EscapeLiteralWhitespace(text);
+            try{document=JsonDocument.Parse(text);}
             catch(JsonException error)
-            {throw new InvalidDataException($"Réponse Copilot non conforme au JSON attendu (ligne {error.LineNumber}, position {error.BytePositionInLine}). Aucun résultat d'analyse n'a été accepté. Les références et champs requis restent contrôlés.",error);}
+            {throw Failure("syntaxe JSON invalide",error);}
         }
+        using(document)
+            if(document.RootElement.ValueKind!=JsonValueKind.Object)throw new InvalidDataException("Réponse Copilot refusée : un objet JSON est requis à la racine.");
+        try{return JsonSerializer.Deserialize<T>(text,ResponseOptions)??throw new InvalidDataException("Réponse Copilot vide.");}
+        catch(JsonException error){throw Failure("JSON lisible mais structure incompatible (champ requis, inconnu ou valeur de type incorrect)",error);}
+    }
+
+    private static InvalidDataException Failure(string reason,JsonException error)
+    {
+        // Never display arbitrary field names/values: even exception paths can contain source text.
+        var path=error.Path;
+        var safe=path!=null&&System.Text.RegularExpressions.Regex.IsMatch(path,@"^\$(\.(findings|entity|kind|statement|contribution|evidenceIds|relatedClaimIds|uncertain|qualifiedName|conditions|text|claimIds|uncertainties|answer|citations|nextQueries|questions)|\[[0-9]{1,6}\])*$")?path:"champ non prévu";
+        return new InvalidDataException($"Réponse Copilot refusée : {reason} (chemin {safe}, ligne {error.LineNumber}, position {error.BytePositionInLine}).",error);
     }
 
     private static string EscapeLiteralWhitespace(string text)

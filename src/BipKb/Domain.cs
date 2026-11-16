@@ -16,13 +16,7 @@ public static class Json
     public static string Serialize<T>(T value) => JsonSerializer.Serialize(value, Options);
     public static T Read<T>(string text) => JsonSerializer.Deserialize<T>(text, Options) ?? throw new InvalidDataException("Empty JSON.");
     public static string Hash(string text) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
-    public static void Write<T>(string path, T value)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try { File.WriteAllText(temp, Serialize(value) + "\n"); File.Move(temp, path, true); }
-        finally { if (File.Exists(temp)) File.Delete(temp); }
-    }
+    public static void Write<T>(string path, T value)=>AtomicFile.Write(path,Serialize(value)+"\n");
 }
 public enum SourceRole { Unknown, Legacy, Target, Current }
 public enum Contribution { New, Corroboration, Complement, Contradiction, Evolution, Hypothesis, None }

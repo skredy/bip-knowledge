@@ -97,7 +97,7 @@ public sealed class MemoryStore(Workspace workspace)
         var heads=manifests.Where(c=>!parents.Contains(c.Id)).Select(c=>c.Id).Order(StringComparer.Ordinal).ToArray();
         var payload=Json.Serialize(mutations)+"\n";var hash=Json.Hash(payload);
         var objectPath=Path.Combine(DirectoryPath,"objects",hash+".json");Directory.CreateDirectory(Path.GetDirectoryName(objectPath)!);
-        if(!File.Exists(objectPath)) { var temp=objectPath+".tmp";File.WriteAllText(temp,payload);File.Move(temp,objectPath,true); }
+        if(!File.Exists(objectPath))AtomicFile.Write(objectPath,payload);
         var change=new ChangeSet(Guid.NewGuid().ToString("N"),heads,hash,DateTimeOffset.UtcNow);
         Json.Write(Path.Combine(Manifests,change.Id+".json"),change);
     }

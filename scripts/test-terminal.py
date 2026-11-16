@@ -118,6 +118,10 @@ if (root/'fail').exists():
  (root/'fail').unlink();print('Simulated provider failure',file=sys.stderr);sys.exit(1)
 prompt=args[args.index('--prompt')+1]
 data=json.loads(prompt.split('UNTRUSTED_DATA\\n',1)[1])
+if (root/'malformed').exists():
+ (root/'malformed').unlink()
+ print(json.dumps({'type':'assistant.message','data':{'content':'{"findings": ['}}))
+ print(json.dumps({'type':'result','exitCode':0}));sys.exit(0)
 response=json.dumps({'findings':[] if data['phase']=='reconcile' else [{'entity':'Facture','kind':'rule','statement':u['text'],'contribution':'new','evidenceIds':[u['id']]} for u in data['units']]})
 print(json.dumps({'type':'assistant.message','data':{'content':response}}))
 print(json.dumps({'type':'result','exitCode':0}))
@@ -172,6 +176,7 @@ print(json.dumps({'type':'result','exitCode':0}))
         saved = json.loads(config_path.read_text(encoding="utf-8"))["sources"][0]
         assert saved["id"] == "etude-sql" and saved["context"]["description"] == description.strip()
         assert saved["context"]["notes"] == notes.strip()
+        (root / "malformed").touch()
         with terminal("--ingest", corpus) as session:
             session.expect("Contexte réutilisé")
             transcript = session.finish()
@@ -179,6 +184,7 @@ print(json.dumps({'type':'result','exitCode':0}))
             assert '[ingestion ' in transcript and 'Fichier 1/3' in transcript
             assert 'attente de Copilot' in transcript and 'Rapprochement entre fichiers' in transcript
             assert 'Ingestion terminée' in transcript
+            assert 'nouvelle tentative de format (2/2)' in transcript
         calls = (root / "calls").read_text()
         assert cli("--ingest", corpus)["unchanged"] == 3
         assert (root / "calls").read_text() == calls
