@@ -2,11 +2,11 @@
 
 Assistant local de connaissance technique : ingestion de documents et de code, mémoire sourcée, recherche, enquêtes avec Copilot CLI et dossiers de travail persistants. .NET 10, SQLite FTS5, Razor Pages, partage par Git et MCP en lecture seule.
 
-**Version 0.3.3.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
+**Version 0.3.4.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
 
 ## Installer ou mettre à jour
 
-Prérequis : SDK .NET 10 (incluant ASP.NET Core), Git, Copilot CLI authentifié. Sous Windows, utiliser la distribution native `copilot.exe` ; les wrappers `.cmd` ne sont pas exécutés via un shell.
+Prérequis : SDK .NET 10 (incluant ASP.NET Core), Git, Copilot CLI authentifié. Sous Windows, bip-kb détecte la distribution native `copilot.exe` et les installations npm `@github/copilot` (via Node.js). Le seul lanceur `copilot.ps1` ajouté par l’extension VS Code ne suffit pas : la CLI autonome doit être installée.
 
 ```powershell
 ./scripts/install.ps1 -ToolPath "$env:USERPROFILE/.bip-tools"
@@ -20,7 +20,7 @@ Sous Linux :
 dotnet restore --locked-mode
 dotnet test --no-restore
 dotnet pack src/BipKb -c Release --no-restore -o artifacts
-dotnet tool install BipKb --version 0.3.3 --add-source ./artifacts --tool-path ./artifacts/tools
+dotnet tool install BipKb --version 0.3.4 --add-source ./artifacts --tool-path ./artifacts/tools
 ```
 
 ### Si vous avez une base 0.1 ou 0.2
@@ -65,6 +65,28 @@ bip-kb project summary --project "Migration BIP"
 ```
 
 Conserver les `id` lors des modifications. Les noms de projet/domaine doivent correspondre au contexte des sources. Les synthèses sont calculées depuis les données et citent leurs dépendances ; elles ne sont pas des preuves indépendantes.
+
+### Si PowerShell trouve Copilot mais bip-kb ne peut pas le lancer
+
+```powershell
+Get-Command copilot -All | Select-Object CommandType, Source, Path
+```
+
+Un résultat sous `Code/User/globalStorage/github.copilot-chat/copilotCli/copilot.ps1` désigne le lanceur de VS Code : il recherche une CLI installée séparément et peut proposer son installation. Ce résultat seul ne confirme pas que la CLI autonome est installée ou accessible dans `PATH`.
+
+Installer la CLI autonome si nécessaire, avec **une** des commandes suivantes :
+
+```powershell
+winget install --id GitHub.Copilot --exact
+# Ou, si vous utilisez npm :
+npm install -g @github/copilot
+```
+
+Rouvrir le terminal après installation, puis lancer `copilot --version`, `bip-kb doctor` et `bip-kb doctor --live` depuis le dossier de connaissance. Une authentification Copilot CLI peut être nécessaire ; l'extension VS Code et la CLI sont deux points d'entrée distincts.
+
+`doctor` indique désormais le chemin réellement lancé et le mode (`native`, `npm-node`, etc.). Si l'exécutable est installé hors du `PATH`, renseigner `copilotExecutable` dans `bip.json` avec son chemin exact. Un chemin relatif est résolu depuis le workspace. Les chemins locaux d'installation n'ont pas à être identiques sur les autres postes : conserver `copilot` quand la détection automatique suffit.
+
+bip-kb ne lance pas les scripts d'installation VS Code, ne contourne pas les politiques PowerShell et n'exécute pas les documents via un shell. Pour npm, il lit le point d'entrée déclaré du package installé et le transmet directement à Node.js. Le contexte déjà enregistré est conservé : relancer ensuite la même ingestion sans `--describe`.
 
 ## Ingérer sans préciser le format
 

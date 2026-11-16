@@ -36,6 +36,8 @@ public static class Processes
 public sealed class CopilotAnalyzer(Workspace workspace) : IAnalyzer, IResearchAssistant
 {
     private string? help;
+    private CopilotLaunch? launch;
+    private CopilotLaunch Launch=>launch??=CopilotLaunch.Resolve(workspace.Config.CopilotExecutable,workspace.Root);
     private static readonly string[] Required=["--prompt","--silent","--deny-tool","--available-tools","--disable-builtin-mcps","--no-custom-instructions","--no-auto-update","--stream","--no-color","--no-ask-user"];
     public async Task<object> Doctor(bool live,CancellationToken ct)
     {
@@ -43,12 +45,18 @@ public sealed class CopilotAnalyzer(Workspace workspace) : IAnalyzer, IResearchA
         var version=await Probe("--version",ct);
         object? completion=null;
         if(live) completion=await Ask("Réponds simplement que la connexion fonctionne ; aucune connaissance fournie.",[],ct);
-        return new { executable=workspace.Config.CopilotExecutable,version=version.Output.Trim(),nonInteractive=true,attachments=help!.Contains("--attachment"),authentication=live?"live request succeeded":"not tested",completion };
+        return new { executable=workspace.Config.CopilotExecutable,resolvedExecutable=Launch.Executable,launcher=Launch.Kind,prefixArguments=Launch.PrefixArguments,version=version.Output.Trim(),nonInteractive=true,attachments=help!.Contains("--attachment"),authentication=live?"live request succeeded":"not tested",completion };
     }
     private Task<ProcessResult> Probe(string argument,CancellationToken ct)
     {
-        var p=new ProcessStartInfo(workspace.Config.CopilotExecutable); p.ArgumentList.Add(argument); p.Environment["COPILOT_AUTO_UPDATE"]="false";
-        return Processes.Run(p,TimeSpan.FromSeconds(30),ct);
+        var p=Launch.Start(); p.ArgumentList.Add(argument); p.Environment["COPILOT_AUTO_UPDATE"]="false";
+        return Run(p,TimeSpan.FromSeconds(30),ct);
+    }
+    private static async Task<ProcessResult> Run(ProcessStartInfo start,TimeSpan timeout,CancellationToken ct)
+    {
+        try{return await Processes.Run(start,timeout,ct);}
+        catch(System.ComponentModel.Win32Exception e)
+        {throw new InvalidOperationException($"Impossible de lancer Copilot CLI via '{start.FileName}' (erreur système {e.NativeErrorCode}). Vérifiez cette installation avec bip-kb doctor et le chemin copilotExecutable dans bip.json. Le contexte enregistré est conservé.",e);}
     }
     private async Task Ensure(CancellationToken ct)
     {
@@ -76,13 +84,13 @@ public sealed class CopilotAnalyzer(Workspace workspace) : IAnalyzer, IResearchA
         {
             for(var attempt=0;;attempt++)
             {
-                var start=new ProcessStartInfo(workspace.Config.CopilotExecutable){WorkingDirectory=directory};
+                var start=Launch.Start(directory);
                 foreach(var a in Arguments(prompt,attachment))start.ArgumentList.Add(a);
                 start.Environment["COPILOT_ALLOW_ALL"]="false"; start.Environment["COPILOT_ASSISTED_APPROVAL"]="false";
                 start.Environment["COPILOT_AUTO_UPDATE"]="false"; start.Environment["COPILOT_PLUGIN_DIR_ONLY"]="true";
                 start.Environment["COPILOT_DISABLE_LOGIN_SHELL_ENV"]="true";
                 start.Environment.Remove("COPILOT_CUSTOM_INSTRUCTIONS_DIRS"); start.Environment.Remove("COPILOT_SKILLS_DIRS");
-                var result=await Processes.Run(start,TimeSpan.FromSeconds(workspace.Config.TimeoutSeconds),ct);
+                var result=await Run(start,TimeSpan.FromSeconds(workspace.Config.TimeoutSeconds),ct);
                 if(result.ExitCode==0) return Unfence(result.Output);
                 if(attempt<2&&Regex.IsMatch(result.Error,@"\b(429|502|503|504)\b")) { await Task.Delay(TimeSpan.FromSeconds(2*(attempt+1)),ct); continue; }
                 // Never echo provider output: it may contain source text or credentials.

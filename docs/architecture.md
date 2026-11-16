@@ -50,7 +50,9 @@ La fraîcheur dépend des sources, assertions, profil, décisions et déclaratio
 
 ## Contrat Copilot et limites de confiance
 
-Chaque processus démarre dans un dossier temporaire hors des sources. Données JSON et pièces jointes sont non fiables et ne constituent jamais des instructions. Pas de shell pour interpréter les arguments. Les commandes, écritures, lectures par outils, mémoire et URL sont refusées ; liste d'outils vide, instructions personnalisées et MCP intégrés désactivés. Aucun mode donnant toutes les permissions. Les fichiers temporaires sont supprimés après usage.
+Le lanceur Copilot est résolu une seule fois avant le changement de dossier : exécutable natif ou point d’entrée npm lancé directement avec Node.js. Le chemin relatif éventuel dépend du workspace. Les wrappers PowerShell/batch ne sont pas interprétés et le bootstrapper VS Code n’est pas exécuté. Les arguments restent séparés avec `ArgumentList` et les sorties sont décodées en UTF-8.
+
+Chaque processus d’analyse démarre dans un dossier temporaire hors des sources. Données JSON et pièces jointes sont non fiables et ne constituent jamais des instructions. Pas de shell pour interpréter les arguments. Les commandes, écritures, lectures par outils, mémoire et URL sont refusées ; liste d'outils vide, instructions personnalisées et MCP intégrés désactivés. Aucun mode donnant toutes les permissions. Les fichiers temporaires sont supprimés après usage.
 
 Les unités et références sont bornées à 18 000 caractères de demande structurée ; les arguments encodés sont limités à 30 000 caractères pour Windows. Les sorties dépassant 2 Mo sont rejetées. Timeout/annulation terminent l'arbre du processus ; seules les erreurs transitoires 429/502/503/504 ont deux reprises maximum. Les sorties d'erreur du fournisseur ne sont pas réimprimées avec les documents ou secrets.
 

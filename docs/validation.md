@@ -119,3 +119,13 @@ python3 scripts/test-terminal.py
 # Avec un paquet déjà installé :
 python3 scripts/test-terminal.py --tool /chemin/vers/bip-kb
 ```
+
+## Correctif 0.3.4 — résolution de Copilot sous Windows
+
+**90 tests xUnit réussis, 1 test Copilot authentifié ignoré.** La capture utilisateur montrait uniquement le lanceur `github.copilot-chat/copilotCli/copilot.ps1` de VS Code. L'examen du [bootstrapper amont](https://github.com/microsoft/vscode-copilot-chat/blob/5863f5a/src/extension/chatSessions/vscode-node/copilotCLIShim.ps1) confirme qu'il cherche une installation autonome et peut proposer de l'installer. La présence de ce script ne prouve pas que cette installation existe ou soit accessible dans PATH.
+
+La résolution prend en charge `copilot.exe` et les shims npm `.cmd`/`.ps1` associés au package installé `@github/copilot`. Dans ce dernier cas, bip-kb lit `bin` dans `package.json`, vérifie le chemin et lance directement Node.js avec le point d'entrée ; aucune commande PowerShell/batch ni installation automatique. `doctor` affiche l'exécutable résolu, le mode de lancement et les arguments de démarrage fixes.
+
+Les tests de résolution couvrent le lanceur VS Code seul, un exécutable situé après celui-ci dans PATH, npm, les chemins avec espaces/accents, les installations incomplètes et un point d'entrée sortant du package. Un test avec un véritable processus Node vérifie que JSON, guillemets, retours à la ligne et caractères de shell arrivent inchangés. Ce test est ignoré si Node n'est pas installé : Node reste facultatif pour une installation native de Copilot.
+
+Le paquet 0.3.4 installé passe également tout le scénario `scripts/test-terminal.py`. `doctor` inspecte l'installation Linux réelle de Copilot CLI 1.0.111 et indique correctement son chemin. Les scénarios de résolution Windows sont exercés sur des arborescences de test et intégrés à la CI Windows ; cette session ne constitue pas une validation authentifiée sur le poste professionnel. Le blocage réseau de l'analyse réelle reste celui documenté plus haut.
