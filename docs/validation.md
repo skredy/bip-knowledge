@@ -88,3 +88,9 @@ La CI Linux/Windows est fournie ; son résultat après push doit être consulté
 ## Correctif 0.3.1 — setup expliqué
 
 Le 16 novembre 2026 : **62 tests réussis, 1 test Copilot réel ignoré**. Les nouveaux scénarios vérifient le profil minimal, les champs facultatifs sans valeurs inventées, la conservation du profil et des liens entre sujets lors d'une modification, l'aide `?`, la nouvelle saisie d'un champ requis et l'annulation sans écriture. Le paquet Release 0.3.1 est construit. Un parcours en pseudo-terminal vérifie également les explications, l'aide, les champs laissés vides et le récapitulatif avant confirmation. Le blocage de la validation Copilot réelle décrit ci-dessus reste inchangé.
+
+## Correctif 0.3.2 — validation du contexte
+
+Le 16 novembre 2026 : **71 tests réussis, 1 test Copilot réel ignoré**. Le message « Contexte requis » était aussi utilisé pour un champ rempli mais trop long. Chaque erreur nomme désormais le champ et indique, le cas échéant, sa longueur et sa limite. La saisie guidée redemande uniquement la réponse invalide ; un contexte enregistré invalide peut être corrigé en conservant les autres valeurs. Les notes JSON nulles sont acceptées comme facultatives.
+
+Les tests couvrent chaque limite de longueur, le statut inconnu, les notes facultatives, l'absence d'écriture avant validation, la réparation d'un contexte enregistré et le dépassement du budget après encodage. Un parcours avec le paquet 0.3.2 installé vérifie un contexte dont tous les champs requis sont remplis mais la description trop longue, le diagnostic précis et l'absence d'enregistrement, puis l'ingestion après correction avec Copilot simulé. Cela reproduit une cause du message signalé ; la cause exacte sur le poste utilisateur dépend de sa commande et de ses valeurs.

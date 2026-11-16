@@ -4,6 +4,63 @@ namespace BipKb.Tests;
 
 public class ContextTests
 {
+    [Theory]
+    [InlineData("project",121,120)]
+    [InlineData("domain",121,120)]
+    [InlineData("description",1201,1200)]
+    [InlineData("notes",1201,1200)]
+    public void FilledButTooLongContextIdentifiesTheActualField(string field,int length,int maximum)
+    {
+        var context=new SourceContext("BIP","Facturation","Étude complète",SourceStatus.Validated);
+        context=field switch{"project"=>context with{Project=new('p',length)},"domain"=>context with{Domain=new('d',length)},"description"=>context with{Description=new('x',length)},_=>context with{Notes=new('n',length)}};
+        var error=Assert.Throws<ArgumentException>(context.Validate);
+        Assert.Contains("("+field+")",error.Message);Assert.Contains(length+" caractères saisis",error.Message);Assert.Contains("maximum "+maximum,error.Message);
+        Assert.DoesNotContain("Contexte requis",error.Message);
+    }
+    [Fact]
+    public void OptionalJsonNotesCanBeOmittedOrNull()
+    {
+        var omitted=Json.Read<SourceDescriptor>("""{"role":"target","context":{"project":"BIP","domain":"Facturation","description":"Étude","status":"validated"}}""");
+        omitted.Validate();(omitted with{Context=omitted.Context with{Notes=null}}).Validate();
+    }
+    [Fact]
+    public async Task GuidedInputRetriesOnlyInvalidFieldsAndPreservesPreviousAnswers()
+    {
+        using var s=new Sandbox();var path=Fresh(s);var output=new StringWriter();
+        var input="factures\nBIP\nFacturation\ntarget\nunknown\nvalidated\n"+new string('x',1201)+"\nÉtude corrigée\n\noui\n";
+        var id=await new SourceSetup(s.Workspace,new StringReader(input),output,true).Prepare(path,null,null,null,false,default);
+        var descriptor=s.Workspace.Config.Sources.Single(d=>d.Id==id).Resolve("tables.sql")!;
+        Assert.Equal("BIP",descriptor.Context.Project);Assert.Equal("Facturation",descriptor.Context.Domain);Assert.Equal(SourceStatus.Validated,descriptor.Context.Status);
+        Assert.Equal("Étude corrigée",descriptor.Context.Description);Assert.Contains("1201 caractères saisis",output.ToString());Assert.Contains("Statut invalide",output.ToString());
+    }
+    [Fact]
+    public async Task InvalidJsonContextDoesNotSaveAnythingAndNamesTheProblem()
+    {
+        using var s=new Sandbox();var path=Fresh(s);var contextFile=Path.Combine(s.Root,"context.json");
+        Json.Write(contextFile,Descriptor() with{Context=Descriptor().Context with{Description=new string('x',1201)}});
+        var before=Json.Serialize(s.Workspace.Config);
+        var error=await Assert.ThrowsAsync<ArgumentException>(()=>new SourceSetup(s.Workspace,TextReader.Null,TextWriter.Null,false).Prepare(path,"factures",null,contextFile,false,default));
+        Assert.Contains("Description (description)",error.Message);Assert.Equal(before,Json.Serialize(s.Workspace.Config));Assert.DoesNotContain("factures",s.Workspace.Bindings().Keys);
+    }
+    [Fact]
+    public async Task InvalidSavedContextCanBeRepairedWithoutReenteringOtherFields()
+    {
+        using var s=new Sandbox();s.File("a.md","Une commande");var config=s.Workspace.Config;var original=config.Sources[0].Context!;
+        config.Sources[0]=config.Sources[0] with{Context=original with{Notes=new string('n',1201)}};Json.Write(Path.Combine(s.Workspace.Root,"bip.json"),config);
+        var output=new StringWriter();
+        var id=await new SourceSetup(s.Workspace,new StringReader("\n\n\n\n\nNotes corrigées\noui\n"),output,true).Prepare(s.Source,null,null,null,false,default);
+        Assert.Equal("test",id);Assert.Equal(original with{Notes="Notes corrigées"},s.Workspace.Config.Sources[0].Context);
+        Assert.Contains("Précisions (notes)",output.ToString());
+    }
+    [Fact]
+    public async Task EncodedBudgetFailureCanBeCorrectedBeforePublication()
+    {
+        using var s=new Sandbox();var path=Fresh(s);var output=new StringWriter();
+        var input="factures\nBIP\nFacturation\ntarget\nvalidated\n"+new string('"',1200)+"\n"+new string('"',1200)+"\nDescription courte\nNotes courtes\noui\n";
+        await new SourceSetup(s.Workspace,new StringReader(input),output,true).Prepare(path,null,null,null,false,default);
+        Assert.Contains("trop volumineux après encodage",output.ToString());
+        Assert.Equal("Description courte",s.Workspace.Config.Sources.Single(d=>d.Id=="factures").Context!.Description);
+    }
     private static SourceDescriptor Descriptor(string domain="Facturation",SourceStatus status=SourceStatus.Proposal) =>
         new(SourceRole.Target,new("iBip",domain,"Migration des factures vers le MPD cible",status,"Les noms de tables ont changé."));
     private static string Fresh(Sandbox s)

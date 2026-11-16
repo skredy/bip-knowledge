@@ -27,15 +27,22 @@ public static class Json
 public enum SourceRole { Unknown, Legacy, Target, Current }
 public enum Contribution { New, Corroboration, Complement, Contradiction, Evolution, Hypothesis, None }
 public enum SourceStatus { Unknown, Proposal, Validated, Observed, Historical }
-public sealed record SourceContext(string Project, string Domain, string Description, SourceStatus Status, string Notes = "")
+public sealed record SourceContext(string Project, string Domain, string Description, SourceStatus Status, string? Notes = "")
 {
     [JsonIgnore]
     public string Scope => Json.Serialize(new[]{Project.Trim().ToLowerInvariant(),Domain.Trim().ToLowerInvariant()});
     public void Validate()
     {
-        if(string.IsNullOrWhiteSpace(Project)||Project.Length>120||string.IsNullOrWhiteSpace(Domain)||Domain.Length>120||string.IsNullOrWhiteSpace(Description)||Description.Length>1200||Notes==null||Notes.Length>1200||Status==SourceStatus.Unknown||!Enum.IsDefined(Status))
-            throw new ArgumentException("Contexte requis : projet, domaine, description, statut proposal|validated|observed|historical. Description et notes : 1200 caractères maximum.");
+        var errors=new[]{TextError("Projet (project)",Project,120),TextError("Sujet métier (domain)",Domain,120),TextError("Description (description)",Description,1200),TextError("Précisions (notes)",Notes,1200,false),
+            Status==SourceStatus.Unknown||!Enum.IsDefined(Status)?"Statut (status) : choisissez proposal, validated, observed ou historical.":null}.Where(e=>e!=null).ToArray();
+        if(errors.Length>0)throw new ArgumentException("Contexte invalide : "+string.Join(" ",errors));
         if(Json.Serialize(this).Length>4000)throw new ArgumentException("Contexte trop volumineux après encodage ; raccourcissez la description ou les notes.");
+    }
+    public static string? TextError(string label,string? value,int maxLength,bool required=true)
+    {
+        if(required&&string.IsNullOrWhiteSpace(value))return label+" : ce champ est vide ; renseignez-le.";
+        if(value?.Length>maxLength)return $"{label} : {value.Length} caractères saisis, maximum {maxLength}. Raccourcissez ce champ.";
+        return null;
     }
 }
 public sealed record SourceDescriptor(SourceRole Role, SourceContext Context)

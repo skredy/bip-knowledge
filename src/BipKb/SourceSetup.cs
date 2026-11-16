@@ -43,9 +43,16 @@ public sealed class SourceSetup(Workspace workspace,TextReader input,TextWriter 
         }
         if(existing!=null&&supplied==null&&!describe&&(role==null||role==existing.Role))
         {
-            existing.Validate();
-            output.WriteLine($"Contexte réutilisé : {existing.Context.Project} / {existing.Context.Domain} — {existing.Role}, {existing.Context.Status}. Utilisez --describe pour le modifier.");
-            return sourceId!;
+            try
+            {
+                existing.Validate();
+                output.WriteLine($"Contexte réutilisé : {existing.Context.Project} / {existing.Context.Domain} — {existing.Role}, {existing.Context.Status}. Utilisez --describe pour le modifier.");
+                return sourceId!;
+            }
+            catch(ArgumentException e) when(interactive)
+            {
+                output.WriteLine(e.Message);output.WriteLine("Corrigeons ce contexte. Les réponses existantes restent proposées.");
+            }
         }
         if(!interactive&&supplied==null)throw new ArgumentException("Contexte manquant ou modifié. Relancez dans un terminal interactif, ou fournissez --context-file contexte.json (role, context: project, domain, description, status, notes). Aucun appel Copilot effectué.");
         var files=await Extractor.Inventory(path,root,config,ct);
@@ -83,20 +90,30 @@ public sealed class SourceSetup(Workspace workspace,TextReader input,TextWriter 
             if(known.Length>0)output.WriteLine("Contextes existants (réutilisez les mêmes noms pour relier les sources) : "+string.Join(" ; ",known));
             var profiles=workspace.Load().Projects;
             if(profiles.Count>0)output.WriteLine("Projets configurés : "+string.Join(" ; ",profiles.Select(p=>p.Name)));
-            var project=Read("Projet auquel rattacher ces fichiers",existing?.Context.Project??(profiles.Count==1?profiles[0].Name:null),ct);
+            var project=Read("Projet auquel rattacher ces fichiers",existing?.Context.Project??(profiles.Count==1?profiles[0].Name:null),ct,maxLength:120);
             var selectedProject=profiles.SingleOrDefault(p=>p.Name.Equals(project,StringComparison.OrdinalIgnoreCase));
             if(selectedProject!=null)output.WriteLine("Sujets métier configurés : "+string.Join(" ; ",selectedProject.Domains.Select(d=>d.Name)));
             output.WriteLine("Sujet métier = ce dont parlent ces fichiers, par exemple Clients, Commandes ou Facturation.");
-            var domain=Read("Sujet métier principal",existing?.Context.Domain??(selectedProject?.Domains.Length==1?selectedProject.Domains[0].Name:null),ct);
+            var domain=Read("Sujet métier principal",existing?.Context.Domain??(selectedProject?.Domains.Length==1?selectedProject.Domains[0].Name:null),ct,maxLength:120);
             output.WriteLine("legacy = ancien système ; target = cible prévue ; current = implémentation actuelle.");
-            var roleText=Read("Rôle : legacy / target / current",(role??existing?.Role??definition?.Role)?.ToString().ToLowerInvariant(),ct);
+            var roleText=Read("Rôle : legacy / target / current",(role??existing?.Role??definition?.Role)?.ToString().ToLowerInvariant(),ct,validate:v=>Enum.TryParse<SourceRole>(v,true,out var r)&&Enum.IsDefined(r)&&r!=SourceRole.Unknown?null:"Rôle invalide : choisissez legacy, target ou current.");
             if(!Enum.TryParse<SourceRole>(roleText,true,out var selectedRole)||!Enum.IsDefined(selectedRole)||selectedRole==SourceRole.Unknown)throw new ArgumentException("Rôle inconnu.");
             output.WriteLine("proposal = proposition à discuter ; validated = validé par votre équipe ; observed = constaté dans le code ou les données ; historical = référence ancienne.");
-            var statusText=Read("Statut : proposal / validated / observed / historical",existing?.Context.Status.ToString().ToLowerInvariant(),ct);
+            var statusText=Read("Statut : proposal / validated / observed / historical",existing?.Context.Status.ToString().ToLowerInvariant(),ct,validate:v=>Enum.TryParse<SourceStatus>(v,true,out var status)&&Enum.IsDefined(status)&&status!=SourceStatus.Unknown?null:"Statut invalide : choisissez proposal, validated, observed ou historical.");
             if(!Enum.TryParse<SourceStatus>(statusText,true,out var status)||!Enum.IsDefined(status))throw new ArgumentException("Statut inconnu.");
-            var description=Read("Que contient cet ensemble, et à quoi sert-il ?",existing?.Context.Description,ct);
-            var notes=Read("Précisions, limites ou correspondances connues (facultatif)",existing?.Context.Notes??"",ct,true);
-            supplied=new(selectedRole,new(project,domain,description,status,notes));supplied.Validate();
+            var description=Read("Que contient cet ensemble, et à quoi sert-il ?",existing?.Context.Description,ct,maxLength:1200);
+            var notes=Read("Précisions, limites ou correspondances connues (facultatif)",existing?.Context.Notes??"",ct,true,maxLength:1200);
+            while(true)
+            {
+                supplied=new(selectedRole,new(project,domain,description,status,notes));
+                try{supplied.Validate();break;}
+                catch(ArgumentException e)
+                {
+                    output.WriteLine(e.Message);
+                    description=Read("Description abrégée",description,ct,maxLength:1200);
+                    notes=Read("Précisions abrégées (facultatif)",notes,ct,true,maxLength:1200);
+                }
+            }
         }
         output.WriteLine(Json.Serialize(supplied));
         if(interactive)
@@ -108,13 +125,17 @@ public sealed class SourceSetup(Workspace workspace,TextReader input,TextWriter 
         if(new Projects(workspace).Find(supplied.Context.Project)==null)output.WriteLine("Fiche globale non configurée : lancez bip-kb project setup pour préparer les enquêtes et conversations.");
         return sourceId;
     }
-    private string Read(string label,string? fallback,CancellationToken ct,bool optional=false)
+    private string Read(string label,string? fallback,CancellationToken ct,bool optional=false,int? maxLength=null,Func<string,string?>? validate=null)
     {
-        ct.ThrowIfCancellationRequested();output.Write(label+(fallback!=null?$" [{fallback}]":"")+" : ");output.Flush();
-        var line=input.ReadLine()??throw new OperationCanceledException("Saisie interrompue.");
-        if(line.Trim().Equals("/cancel",StringComparison.OrdinalIgnoreCase))throw new OperationCanceledException();
-        var value=line.Trim().Length==0?fallback??"":line.Trim();
-        if(value.Length==0&&!optional)throw new ArgumentException("Champ requis : "+label);
-        return value;
+        while(true)
+        {
+            ct.ThrowIfCancellationRequested();output.Write(label+(maxLength!=null?$" ({maxLength} caractères max.)":"")+(fallback!=null?$" [{fallback}]":"")+" : ");output.Flush();
+            var line=input.ReadLine()??throw new OperationCanceledException("Saisie interrompue.");
+            if(line.Trim().Equals("/cancel",StringComparison.OrdinalIgnoreCase))throw new OperationCanceledException();
+            var value=line.Trim().Length==0?fallback??"":line.Trim();
+            var error=SourceContext.TextError(label,value,maxLength??int.MaxValue,!optional)??validate?.Invoke(value);
+            if(error==null)return value;
+            output.WriteLine(error+" Corrigez cette réponse, ou /cancel pour annuler.");
+        }
     }
 }

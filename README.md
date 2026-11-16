@@ -2,7 +2,7 @@
 
 Assistant local de connaissance technique : ingestion de documents et de code, mémoire sourcée, recherche, enquêtes avec Copilot CLI et dossiers de travail persistants. .NET 10, SQLite FTS5, Razor Pages, partage par Git et MCP en lecture seule.
 
-**Version 0.3.1.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
+**Version 0.3.2.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
 
 ## Installer ou mettre à jour
 
@@ -20,7 +20,7 @@ Sous Linux :
 dotnet restore --locked-mode
 dotnet test --no-restore
 dotnet pack src/BipKb -c Release --no-restore -o artifacts
-dotnet tool install BipKb --version 0.3.1 --add-source ./artifacts --tool-path ./artifacts/tools
+dotnet tool install BipKb --version 0.3.2 --add-source ./artifacts --tool-path ./artifacts/tools
 ```
 
 ### Si vous avez une base 0.1 ou 0.2
@@ -94,6 +94,8 @@ bip-kb source bind facturation D:/Equipe/Facturation
 ```
 
 Pour plusieurs dossiers indépendants, donner un identifiant de source différent à chacun ; `source bind` associe un identifiant à une seule racine.
+
+Projet et sujet métier : **120 caractères maximum** chacun. Description et précisions : **1 200 caractères maximum** chacune. Ces limites sont affichées pendant la saisie. Si une réponse est invalide, seul ce champ est redemandé ; les autres réponses sont conservées. Les erreurs d’un contexte JSON nomment également les champs concernés.
 
 Un [contexte JSON](docs/source-context.example.json) contient `role` et `context` (project, domain, description, status, notes). `--json`, `--non-interactive` et l'entrée redirigée ne posent aucune question : un contexte manquant provoque une erreur avant Copilot. `source bind` remappe une source partagée sans changer sa description.
 
