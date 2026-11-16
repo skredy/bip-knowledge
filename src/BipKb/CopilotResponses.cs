@@ -1,6 +1,6 @@
 namespace BipKb;
 
-/// <summary>One bounded format/control retry; provenance validation remains mandatory.</summary>
+/// <summary>One bounded fresh response attempt; provenance validation remains mandatory.</summary>
 public static class CopilotResponses
 {
     public static async Task<T> Run<T>(string prompt,string phase,string diagnosticDirectory,
@@ -30,14 +30,14 @@ public static class CopilotResponses
                 if(attempt==0)
                 {
                     correction=error.Kind+" RETRY: "+error.Correction;
-                    progress?.Invoke(error.Message+" Nouvelle tentative de "+(error.Kind=="COVERAGE"?"couverture":"navigation")+" (2/2).");continue;
+                    progress?.Invoke(error.Message+" "+(error.Kind=="REFERENCES"?"Nouvelle analyse de l'appel":error.Kind=="COVERAGE"?"Nouvelle tentative de couverture":"Nouvelle tentative de navigation")+" (2/2).");continue;
                 }
                 throw Rejected(new InvalidDataException(error.Message),rejected,phase,prompt,diagnosticDirectory);
             }
             catch(InvalidDataException error)
             {
                 rejected.Add(new{attempt=attempt+1,reason=error.Message,response});
-                // Unknown evidence and contradictory references must not trigger a cosmetic repair.
+                // All other validation failures remain terminal; no cosmetic repair of accepted data.
                 throw Rejected(error,rejected,phase,prompt,diagnosticDirectory);
             }
             return result;

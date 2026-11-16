@@ -59,10 +59,10 @@ def main():
                 (root / 'stdin-enabled').touch()
             run('--ingest', file, '--source', 'benchmark', '--context-file', descriptor, '--analyze', '--max-calls', 100)
             calls = [json.loads(line) for line in log.read_text().splitlines()]
-            ids = {proof for call in calls for proof in call['ids']}
+            numbers = {number for call in calls for number in call['numbers']}
             summary = run('analysis', 'benchmark')['published'][0]['exploration']
-            assert summary['analyzedUnits'] == summary['totalUnits'] == len(ids) == 566
-            return {'calls': len(calls), 'units': len(ids), 'maxPromptCharacters': max(c['promptCharacters'] for c in calls)}, ids
+            assert summary['analyzedUnits'] == summary['totalUnits'] == len(numbers) == 566
+            return {'calls': len(calls), 'units': len(numbers), 'maxPromptCharacters': max(c['promptCharacters'] for c in calls)}, numbers
 
         metrics = {'xlsxBytes': file.stat().st_size, 'model': 'simulated; request counts only'}
         previous = None

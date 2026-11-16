@@ -2,13 +2,15 @@
 
 Assistant local de connaissance technique : ingestion de documents et de code, mémoire sourcée, recherche, enquêtes avec Copilot CLI et dossiers de travail persistants. .NET 10, SQLite FTS5, Razor Pages, partage par Git et MCP en lecture seule.
 
-**Version 0.4.4.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
+**Version 0.4.5.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
 
 La 0.4.2 corrige le décodage des réponses et erreurs Copilot sous Windows : l'entrée et les deux sorties du processus utilisent explicitement UTF-8, indépendamment de la page de codes de la console. Le test de conservation des accents et caractères Unicode reste actif.
 
-La **0.4.3** évite de rejeter une réponse lorsque Copilot demande plus de 200 unités à lire : seules les 200 premières unités distinctes demandées, limitées à la fin du document et au budget de texte, sont fournies. Le reste demeure à lire ; la couverture n'est jamais déduite de la demande. Une navigation invalide (par exemple un numéro de départ inexistant) bénéficie d'une seule nouvelle tentative, partagée avec celle du format JSON. Les preuves invalides restent refusées sans cette tentative. Pour reprendre une exploration interrompue, utiliser `--analyze`, **sans `--reanalyze`**, depuis le même workspace et avec les mêmes sources et contexte.
+La **0.4.3** évite de rejeter une réponse lorsque Copilot demande plus de 200 unités à lire : seules les 200 premières unités distinctes demandées, limitées à la fin du document et au budget de texte, sont fournies. Le reste demeure à lire ; la couverture n'est jamais déduite de la demande. Une navigation invalide (par exemple un numéro de départ inexistant) bénéficie d'une seule nouvelle tentative, partagée avec celle du format JSON. Les preuves invalides restent refusées ; la 0.4.5 ajoute la nouvelle analyse décrite ci-dessous. Pour reprendre une exploration interrompue, utiliser `--analyze`, **sans `--reanalyze`**, depuis le même workspace et avec les mêmes sources et contexte.
 
 La **0.4.4** fournit à Copilot les intervalles exacts des unités visibles et lui permet de déclarer explicitement leur examen avec `reviewVisible`. Cette déclaration s'applique uniquement aux unités effectivement transmises, sans inclure les lignes vides omises ni les unités encore à lire. Une plage de couverture citant une unité absente ou déjà déclarée reçoit un diagnostic précis et une seule nouvelle tentative, dans le même budget que les corrections de navigation/format. Aucune couverture refusée n'est acceptée automatiquement. La progression distingue le chargement de la mémoire locale et la raison d'une nouvelle analyse (reprise, contenu ou contexte modifié, réanalyse demandée).
+
+La **0.4.5** fournit des références courtes (`u143`, par exemple) pour les seules unités transmises à chaque appel guidé. Les assertions de contexte utilisent des références distinctes, et leurs preuves non fournies sont masquées. Une citation absente déclenche au plus une nouvelle analyse avec les données originales, sans réinjecter la conclusion refusée. Ce nouvel essai partage le plafond de deux réponses avec les erreurs de format/navigation/couverture. Aucune référence n'est devinée ni remplacée approximativement : si la réponse reste invalide, l'appel échoue. Les références complètes restent conservées dans la mémoire et les caches validés restent réutilisables.
 
 ## Installer ou mettre à jour
 
@@ -28,7 +30,7 @@ Sous Linux :
 dotnet restore --locked-mode
 dotnet test --no-restore
 dotnet pack src/BipKb -c Release --no-restore -o artifacts
-dotnet tool install BipKb --version 0.4.4 --add-source ./artifacts --tool-path ./artifacts/tools
+dotnet tool install BipKb --version 0.4.5 --add-source ./artifacts --tool-path ./artifacts/tools
 ```
 
 ### Si vous avez une base 0.1 ou 0.2
@@ -133,7 +135,7 @@ bip-kb --ingest "C:/etudes/endpoints.xlsx" --analyze --analysis-mode batches
 
 Les preuves citables proviennent uniquement des unités fournies intégralement dans l'échange. Un aperçu n'est pas une lecture complète. Copilot peut classer une unité lue comme analysée ou non résolue, et exclure explicitement des plages hors sujet avec justification. Les exclusions, même sans lecture intégrale, restent visibles et rendent l'analyse **partielle**. Une synthèse prématurée ne termine pas le parcours : les unités restantes doivent être examinées ou explicitement exclues. La couverture mesure le travail déclaré sur les données fournies, pas la justesse métier du modèle.
 
-Chaque réponse validée est conservée sous `.local/exploration/`. Si le budget est atteint ou qu'une réponse est refusée, aucune révision inachevée n'est publiée : relancer **la même commande sans `--reanalyze`** reprend les échanges dont les demandes sont inchangées. Cela fonctionne aussi après une réanalyse forcée d'une source déjà analysée. Le budget compte les nouveaux échanges d'exploration, hors sonde d'aide et tentatives bornées de format/navigation/couverture/erreurs transitoires de l'adaptateur. Il est commun à tous les fichiers de la commande, et configurable dans `bip.json` (`maxExplorationCalls`, de 1 à 100). Un plafond absolu de 512 échanges par document évite les boucles persistantes.
+Chaque réponse validée est conservée sous `.local/exploration/`. Si le budget est atteint ou qu'une réponse est refusée, aucune révision inachevée n'est publiée : relancer **la même commande sans `--reanalyze`** reprend les échanges dont les demandes sont inchangées. Cela fonctionne aussi après une réanalyse forcée d'une source déjà analysée. Le budget compte les nouveaux échanges d'exploration, hors sonde d'aide et tentatives bornées de format/navigation/couverture/références/erreurs transitoires de l'adaptateur. Il est commun à tous les fichiers de la commande, et configurable dans `bip.json` (`maxExplorationCalls`, de 1 à 100). Un plafond absolu de 512 échanges par document évite les boucles persistantes.
 
 Une analyse terminée avec exclusions ou éléments non résolus est publiée comme partielle ; une réingestion inchangée la conserve. Utiliser `--reanalyze` pour la réexaminer volontairement. Les anciens lots `staging/` et les nouveaux échanges `exploration/` ne sont pas interchangeables : conserver le mode `batches` pour terminer une analyse 0.3.x en cours. Ne supprimer ni l'un ni l'autre pendant une reprise.
 

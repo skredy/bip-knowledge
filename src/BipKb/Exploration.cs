@@ -19,7 +19,7 @@ public sealed record ExplorationSummary(string Protocol,string RunId,string Plan
     [System.Text.Json.Serialization.JsonIgnore] public bool Complete=>AnalyzedUnits+EmptyUnits==TotalUnits;
 }
 public sealed record ExplorationStatus(string Source,string RelativePath,string SourceKey,string RunId,int Step,int RemainingUnits,string State,string Plan,string Profile="arguments-v1");
-// Corrections concern response bookkeeping only, never unsupported findings or image observations.
+// A rejected response is never accepted; bounded retries always validate a fresh response in full.
 public abstract class CopilotCorrectionException(string kind,string message,string correction):Exception("Exploration Copilot refusée : "+message)
 {
     public string Kind {get;}=kind;
@@ -27,6 +27,9 @@ public abstract class CopilotCorrectionException(string kind,string message,stri
 }
 public sealed class CopilotNavigationException(string message,string correction):CopilotCorrectionException("NAVIGATION",message,correction);
 public sealed class CopilotCoverageException(string message,string correction):CopilotCorrectionException("COVERAGE",message,correction);
+public sealed class CopilotReferenceException(string field,int unknown):CopilotCorrectionException("REFERENCES",
+    $"{field} : {unknown} référence(s) absente(s) de cet appel.",
+    $"Fresh analysis required: {field} contains {unknown} unavailable reference(s). The rejected response was discarded. Re-analyze ONLY the actual units in the ORIGINAL request, not a previous conclusion. evidenceIds must exactly match visible[].unit.id, e.g. the supplied u-prefixed labels. relatedClaimIds must exactly match context.existing[].id. These lists are distinct. A unit number, spreadsheet coordinate, context claim's proof or previously read unit is not a supplied citation. If evidence is missing, request its units with read, or record a question/uncertainty; do not invent a reference or attach a merely similar proof. Return a complete response; all findings and coverage will be validated again.");
 public interface IExplorationAssistant
 {
     Task<string> ReadingProfile(CancellationToken ct)=>Task.FromResult(DocumentExplorer.LegacyProfile);
@@ -81,7 +84,7 @@ public sealed class DocumentExplorer(Workspace workspace,IExplorationAssistant a
         }
         if(next!=units+1L||totals["analyzed"]!=s.AnalyzedUnits||totals["excluded"]!=s.ExcludedUnits||totals["unresolved"]!=s.UnresolvedUnits||totals["empty"]!=s.EmptyUnits)throw new InvalidDataException("Inconsistent exploration coverage counts.");
     }
-    public static void Validate(ExplorationReply reply,ExplorationRequest request)
+    public static void Validate(ExplorationReply reply,ExplorationRequest request,bool retryReferences=false)
     {
         [System.Diagnostics.CodeAnalysis.DoesNotReturn] static void Fail(string reason)=>throw new InvalidDataException("Exploration Copilot refusée : "+reason);
         if(string.IsNullOrWhiteSpace(reply.Plan)||reply.Plan.Length>1800||reply.Summary==null||reply.Summary.Length>2000||reply.Query==null||reply.Query.Length>200)Fail("plan, synthèse ou recherche hors limites.");
@@ -92,9 +95,9 @@ public sealed class DocumentExplorer(Workspace workspace,IExplorationAssistant a
         var image=request.Format is ".png" or ".jpg" or ".jpeg";
         if(!image&&reply.VisualStatus!="not-applicable")Fail("observation visuelle sans image fournie.");
         if(image&&reply.VisualStatus=="observed"&&request.Visible.Length==0)Fail("image non fournie dans cet échange.");
-        CopilotAnalyzer.Validate(new(reply.Findings),request.Context with{Units=request.Visible.Select(v=>v.Unit).ToArray()});
         // Unsupported image observations are not repairable as coverage formatting.
-        if(image&&reply.VisualStatus!="observed"&&(reply.Findings.Count>0||reply.Reviews?.Any(r=>r?.Status=="analyzed")==true||reply.ReviewRanges?.Any(r=>r?.Status=="analyzed")==true||reply.ReviewVisible?.Status=="analyzed"))Fail("image non observée : aucune conclusion visuelle ni couverture complète autorisée.");
+        if(image&&reply.VisualStatus!="observed"&&((reply.Findings?.Count??0)>0||reply.Reviews?.Any(r=>r?.Status=="analyzed")==true||reply.ReviewRanges?.Any(r=>r?.Status=="analyzed")==true||reply.ReviewVisible?.Status=="analyzed"))Fail("image non observée : aucune conclusion visuelle ni couverture complète autorisée.");
+        CopilotAnalyzer.Validate(new(reply.Findings!),request.Context with{Units=request.Visible.Select(v=>v.Unit).ToArray()},retryReferences);
         var visible=request.Visible.Select(v=>v.Unit.Id).ToHashSet();
         if(reply.Reviews==null||reply.Reviews.Length>200||reply.Reviews.Any(r=>r==null||!visible.Contains(r.UnitId)||r.Status is not ("analyzed" or "excluded" or "unresolved")||r.Reason==null||r.Reason.Length>500||r.Status!="analyzed"&&string.IsNullOrWhiteSpace(r.Reason))||reply.Reviews.Select(r=>r.UnitId).Distinct().Count()!=reply.Reviews.Length)Fail("couverture non fournie, dupliquée ou sans justification.");
         var ranges=reply.ReviewRanges??[];var byNumber=request.Visible.ToDictionary(v=>v.Number,v=>v.Unit.Id);var reviewed=reply.Reviews.Select(r=>r.UnitId).ToHashSet();

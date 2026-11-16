@@ -76,13 +76,17 @@ public class ExplorationProcessTests
         }
         else {executable=script;File.SetUnixFileMode(script,UnixFileMode.UserRead|UnixFileMode.UserWrite|UnixFileMode.UserExecute);}
         Json.Write(Path.Combine(s.Workspace.Root,"bip.json"),s.Workspace.Config with{CopilotExecutable=executable});
-        File.WriteAllText(Path.Combine(package,"reject-next"),"");
+        File.WriteAllText(Path.Combine(package,"reject-always"),"");
         var analyzer=new CopilotAnalyzer(s.Workspace);var engine=new Ingestor(s.Workspace,analyzer);
         var error=await Assert.ThrowsAsync<InvalidDataException>(()=>engine.Run(file,null,null,false,default,guided:true));
         Assert.Contains("evidenceIds",error.Message);Assert.DoesNotContain("unknown-proof",error.Message);Assert.Empty(s.Workspace.Load().Claims);
         Assert.Single(Directory.GetFiles(Path.Combine(s.Workspace.Local,"copilot-diagnostics")));
-        var report=await engine.Run(file,null,null,false,default,guided:true);Assert.Equal("guided",report.Mode);
         Assert.Equal(3,File.ReadAllLines(Path.Combine(package,"guided-calls.jsonl")).Length);
+        File.Delete(Path.Combine(package,"reject-always"));
+        File.WriteAllText(Path.Combine(package,"reject-next"),"");
+        var report=await engine.Run(file,null,null,false,default,guided:true);Assert.Equal("guided",report.Mode);
+        Assert.Equal(5,File.ReadAllLines(Path.Combine(package,"guided-calls.jsonl")).Length);
+        Assert.All(s.Workspace.Load().Claims,c=>Assert.All(c.EvidenceIds,id=>Assert.Contains(id,Assert.Single(s.Workspace.Load().Sources).EvidenceIds)));
         Assert.True(Assert.Single(s.Workspace.Load().Sources).Exploration!.Complete);
         var messages="{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"analysis\",\"arguments\":{\"id\":\"test\"}}}\n";
         using var output=new StringWriter();await Mcp.Run(s.Workspace,new StringReader(messages),output,default);
