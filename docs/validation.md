@@ -84,3 +84,7 @@ dotnet test --filter FullyQualifiedName~AuthenticatedCopilot
 7. Évaluer quelques questions métier avec des références attendues, puis tester le client MCP dans votre IDE.
 
 La CI Linux/Windows est fournie ; son résultat après push doit être consulté sur GitHub. Le script PowerShell n'a pas été exécuté sous Windows dans cette session.
+
+## Correctif 0.3.1 — setup expliqué
+
+Le 16 novembre 2026 : **62 tests réussis, 1 test Copilot réel ignoré**. Les nouveaux scénarios vérifient le profil minimal, les champs facultatifs sans valeurs inventées, la conservation du profil et des liens entre sujets lors d'une modification, l'aide `?`, la nouvelle saisie d'un champ requis et l'annulation sans écriture. Le paquet Release 0.3.1 est construit. Un parcours en pseudo-terminal vérifie également les explications, l'aide, les champs laissés vides et le récapitulatif avant confirmation. Le blocage de la validation Copilot réelle décrit ci-dessus reste inchangé.

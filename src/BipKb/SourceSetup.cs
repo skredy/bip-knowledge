@@ -83,12 +83,15 @@ public sealed class SourceSetup(Workspace workspace,TextReader input,TextWriter 
             if(known.Length>0)output.WriteLine("Contextes existants (réutilisez les mêmes noms pour relier les sources) : "+string.Join(" ; ",known));
             var profiles=workspace.Load().Projects;
             if(profiles.Count>0)output.WriteLine("Projets configurés : "+string.Join(" ; ",profiles.Select(p=>p.Name)));
-            var project=Read("Projet ou système",existing?.Context.Project??(profiles.Count==1?profiles[0].Name:null),ct);
+            var project=Read("Projet auquel rattacher ces fichiers",existing?.Context.Project??(profiles.Count==1?profiles[0].Name:null),ct);
             var selectedProject=profiles.SingleOrDefault(p=>p.Name.Equals(project,StringComparison.OrdinalIgnoreCase));
-            if(selectedProject!=null)output.WriteLine("Domaines configurés : "+string.Join(" ; ",selectedProject.Domains.Select(d=>d.Name)));
-            var domain=Read("Domaine fonctionnel",existing?.Context.Domain??(selectedProject?.Domains.Length==1?selectedProject.Domains[0].Name:null),ct);
+            if(selectedProject!=null)output.WriteLine("Sujets métier configurés : "+string.Join(" ; ",selectedProject.Domains.Select(d=>d.Name)));
+            output.WriteLine("Sujet métier = ce dont parlent ces fichiers, par exemple Clients, Commandes ou Facturation.");
+            var domain=Read("Sujet métier principal",existing?.Context.Domain??(selectedProject?.Domains.Length==1?selectedProject.Domains[0].Name:null),ct);
+            output.WriteLine("legacy = ancien système ; target = cible prévue ; current = implémentation actuelle.");
             var roleText=Read("Rôle : legacy / target / current",(role??existing?.Role??definition?.Role)?.ToString().ToLowerInvariant(),ct);
             if(!Enum.TryParse<SourceRole>(roleText,true,out var selectedRole)||!Enum.IsDefined(selectedRole)||selectedRole==SourceRole.Unknown)throw new ArgumentException("Rôle inconnu.");
+            output.WriteLine("proposal = proposition à discuter ; validated = validé par votre équipe ; observed = constaté dans le code ou les données ; historical = référence ancienne.");
             var statusText=Read("Statut : proposal / validated / observed / historical",existing?.Context.Status.ToString().ToLowerInvariant(),ct);
             if(!Enum.TryParse<SourceStatus>(statusText,true,out var status)||!Enum.IsDefined(status))throw new ArgumentException("Statut inconnu.");
             var description=Read("Que contient cet ensemble, et à quoi sert-il ?",existing?.Context.Description,ct);

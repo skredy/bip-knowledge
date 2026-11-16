@@ -15,13 +15,48 @@ public sealed class Projects(Workspace workspace)
         else
         {
             if(!interactive)throw new ArgumentException("Use project setup --file project.json in non-interactive mode.");
-            string Read(string q){output.Write(q+" : ");var value=input.ReadLine()?.Trim();if(string.IsNullOrEmpty(value))throw new OperationCanceledException();return value;}
-            var name=Read("Nom du projet");var existing=Find(name);
-            var objective=Read("Objectif et périmètre");var architecture=Read("Architecture cible");var systems=Read("Systèmes concernés (séparés par ;)").Split(';',StringSplitOptions.TrimEntries|StringSplitOptions.RemoveEmptyEntries);
-            var domains=Read("Domaines (séparés par ;)").Split(';',StringSplitOptions.TrimEntries|StringSplitOptions.RemoveEmptyEntries).Select(n=>existing?.Domains.SingleOrDefault(d=>d.Name==n)??new DomainProfile(Guid.NewGuid().ToString("N"),n,"À préciser",[])).ToArray();
-            var conventions=Read("Conventions principales (séparées par ;)").Split(';',StringSplitOptions.TrimEntries|StringSplitOptions.RemoveEmptyEntries);
+            output.WriteLine("Décrivons votre projet pour aider bip-kb à comprendre les documents que vous lui donnerez.");
+            output.WriteLine("Seuls le nom et l'objectif sont nécessaires. Les exemples ne sont pas des réponses présélectionnées.");
+            output.WriteLine("Entrée conserve la valeur affichée ou laisse un champ facultatif vide. ? réaffiche l'aide ; /cancel annule sans enregistrer.");
+            string Read(string label,string explanation,string? fallback=null,bool optional=false)
+            {
+                output.WriteLine("\n"+explanation);
+                while(true)
+                {
+                    output.Write(label+(optional?" (facultatif)":"")+(!string.IsNullOrEmpty(fallback)?$" [{fallback}]":"")+" : ");output.Flush();
+                    var value=input.ReadLine()?.Trim()??throw new OperationCanceledException();
+                    if(value.Equals("/cancel",StringComparison.OrdinalIgnoreCase))throw new OperationCanceledException();
+                    if(value=="?"){output.WriteLine(explanation);continue;}
+                    if(value.Length>0)return value;
+                    if(!string.IsNullOrEmpty(fallback))return fallback;
+                    if(optional)return "";
+                    output.WriteLine("Ce champ est nécessaire ; quelques mots suffisent. /cancel pour quitter.");
+                }
+            }
+            string[] Items(string value)=>value.Split(';',StringSplitOptions.TrimEntries|StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            var name=Read("Nom du projet","Le nom commun aux sources que vous voulez relier. Exemple : Migration BIP.",Find(null)?.Name);var existing=Find(name);
+            name=existing?.Name??name;
+            var objective=Read("Ce que vous voulez réaliser","Pourquoi rassemblez-vous ces connaissances ? Exemple : recréer les endpoints de l'ancien BIP avec le nouveau modèle de données.",existing?.Objective);
+            var architecture=Read("Technologies et organisation du code","Comment l'application est-elle construite ? Exemple : API .NET, SQL Server, DTO et handlers CQRS. Si vous ne savez pas encore, appuyez sur Entrée.",existing?.Architecture,true);
+            if(architecture.Length==0)architecture="Non précisée";
+            var systems=Items(Read("Applications ou bases de données concernées","Les logiciels ou bases entre lesquels vous travaillez, pas vos dossiers ni vos formats de fichiers. Exemple : ancien BIP ; nouvelle API BIP ; base SQL cible. Séparez plusieurs noms par ;",existing==null?null:string.Join(" ; ",existing.Systems),true));
+            var domains=Items(Read("Sujets métier à organiser","Les sujets fonctionnels qui aideront à retrouver et relier les connaissances. Exemple : Clients ; Commandes ; Facturation. Ce ne sont pas les couches techniques comme DTO ou Repository. Une liste partielle suffit ; vous pourrez la compléter.",existing==null?null:string.Join(" ; ",existing.Domains.Select(d=>d.Name)),true))
+                .Select(n=>existing?.Domains.SingleOrDefault(d=>d.Name.Equals(n,StringComparison.OrdinalIgnoreCase))??new DomainProfile(Guid.NewGuid().ToString("N"),n,"À préciser",[])).ToArray();
+            var conventions=Items(Read("Règles de développement à respecter","Les habitudes explicites de votre équipe. Exemple : un handler par query ; reprendre les DTO existants ; tester les filtres métier. Laissez vide si les exemples de code doivent servir de référence. Séparez plusieurs règles par ;",existing==null?null:string.Join(" ; ",existing.Conventions),true));
             profile=new(existing?.Id??Guid.NewGuid().ToString("N"),name,objective,architecture,systems,conventions,domains,existing?.Authorities??[],existing?.Glossary??[]);
-            output.WriteLine(Json.Serialize(profile));output.Write("Enregistrer ? oui/non : ");if(input.ReadLine()?.Trim()!="oui")throw new OperationCanceledException();
+            output.WriteLine($"\nRécapitulatif\nProjet : {profile.Name}\nObjectif : {profile.Objective}\nTechnologies : {profile.Architecture}");
+            output.WriteLine("Applications / bases : "+(systems.Length==0?"À préciser":string.Join(" ; ",systems)));
+            output.WriteLine("Sujets métier : "+(domains.Length==0?"À préciser lors des imports":string.Join(" ; ",domains.Select(d=>d.Name))));
+            output.WriteLine("Règles de développement : "+(conventions.Length==0?"À préciser":string.Join(" ; ",conventions)));
+            output.WriteLine("Ces indications orientent les recherches. Les fichiers seront ajoutés ensuite avec bip-kb --ingest <chemin>.");
+            while(true)
+            {
+                output.Write("Enregistrer ce profil ? oui/non [non] : ");output.Flush();
+                var answer=input.ReadLine()?.Trim().ToLowerInvariant();
+                if(answer is "oui" or "o" or "yes" or "y")break;
+                if(answer is null or "" or "non" or "n" or "no" or "/cancel")throw new OperationCanceledException();
+                output.WriteLine("Répondez oui pour enregistrer, ou non pour annuler.");
+            }
         }
         Validate(profile);
         using var gate=workspace.Lock();workspace.EnsureWritable();var k=workspace.Load();

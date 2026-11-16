@@ -2,7 +2,7 @@
 
 Assistant local de connaissance technique : ingestion de documents et de code, mémoire sourcée, recherche, enquêtes avec Copilot CLI et dossiers de travail persistants. .NET 10, SQLite FTS5, Razor Pages, partage par Git et MCP en lecture seule.
 
-**Version 0.3.0.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
+**Version 0.3.1.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
 
 ## Installer ou mettre à jour
 
@@ -20,7 +20,7 @@ Sous Linux :
 dotnet restore --locked-mode
 dotnet test --no-restore
 dotnet pack src/BipKb -c Release --no-restore -o artifacts
-dotnet tool install BipKb --version 0.3.0 --add-source ./artifacts --tool-path ./artifacts/tools
+dotnet tool install BipKb --version 0.3.1 --add-source ./artifacts --tool-path ./artifacts/tools
 ```
 
 ### Si vous avez une base 0.1 ou 0.2
@@ -43,7 +43,20 @@ bip-kb doctor
 bip-kb doctor --live
 ```
 
-Le profil décrit objectif, architecture, systèmes, conventions, domaines liés, références faisant autorité par sujet et glossaire. Utiliser le [profil complet d'exemple](docs/project.example.json) pour configurer les références, synonymes et liens :
+Le setup explique chaque question avec des exemples. **Seuls le nom et l'objectif sont obligatoires.** Entrée laisse un champ facultatif vide, ou conserve sa valeur si vous modifiez un profil existant. `?` réaffiche l'aide ; `/cancel` annule sans enregistrer. Un récapitulatif précède la confirmation.
+
+| Question | Ce qu'elle signifie | Exemple pour BIP |
+|---|---|---|
+| Nom du projet | Le nom commun aux documents et au code à relier | Migration BIP |
+| Ce que vous voulez réaliser | Le travail que cet assistant doit faciliter | Recréer les endpoints avec le nouveau modèle de données |
+| Technologies et organisation du code | Comment l'application est construite | API .NET, SQL Server, DTO et handlers CQRS |
+| Applications ou bases concernées | Les logiciels et bases sur lesquels vous travaillez | Ancien BIP ; nouvelle API BIP ; base SQL cible |
+| Sujets métier | Les thèmes fonctionnels pour organiser les recherches | Clients ; Commandes ; Facturation |
+| Règles de développement | Les conventions explicites de votre équipe | Un handler par query ; réutiliser les DTO existants |
+
+Les sujets métier ne sont pas les couches techniques comme DTO ou Repository. Les applications concernées ne sont pas des chemins de dossiers : vous indiquerez ceux-ci lors des ingestions. Les exemples ne sont pas enregistrés automatiquement. Vous pouvez relancer `bip-kb project setup` pour compléter le même projet ; ses réponses précédentes sont proposées.
+
+Utiliser le [profil complet d'exemple](docs/project.example.json) pour configurer aussi les références faisant autorité, les synonymes et les liens entre sujets :
 
 ```powershell
 bip-kb project setup --file C:/Config/project.json

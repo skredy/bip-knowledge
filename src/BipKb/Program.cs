@@ -10,7 +10,7 @@ public static class Cli
     public static async Task<int> Run(string[] args)
     {
         if(args.Length==1 && args[0] is "--help" or "-h")args=["help"];
-        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.3.0");return 0;}
+        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.3.1");return 0;}
         using var cancel=new CancellationTokenSource();
         Console.CancelKeyPress+=(_,e)=>{e.Cancel=true;cancel.Cancel();};
         try
@@ -55,7 +55,7 @@ All commands: --workspace <directory>, --json. Quote multiword arguments.
                     using(var gate=workspace.Lock()){new MemoryStore(workspace).Resolve(parsed.Get("file")??throw new ArgumentException("Provide --file."));}result=new{status="resolved"};break;
                 case "project":
                     var projects=new Projects(workspace);
-                    result=Required(1) switch{"setup"=>projects.Setup(parsed.Get("file"),Console.In,Console.Error,!Console.IsInputRedirected&&!parsed.Has("non-interactive")),"show"=>(object?)projects.Find(parsed.Get("project"))??workspace.Load().Projects,"summary"=>projects.Summary(parsed.Get("project")??throw new ArgumentException("Provide --project.")),_=>throw new ArgumentException("Use project setup/show/summary.")};break;
+                    result=Required(1) switch{"setup"=>projects.Setup(parsed.Get("file"),Console.In,Console.Error,!Console.IsInputRedirected&&!parsed.Has("non-interactive")&&!parsed.Has("json")),"show"=>(object?)projects.Find(parsed.Get("project"))??workspace.Load().Projects,"summary"=>projects.Summary(parsed.Get("project")??throw new ArgumentException("Provide --project.")),_=>throw new ArgumentException("Use project setup/show/summary.")};break;
                 case "task":
                     switch(Required(1))
                     {
