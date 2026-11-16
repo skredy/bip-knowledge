@@ -14,12 +14,13 @@ public static class Retrieval
             .Where(x=>x.Score>0).OrderByDescending(x=>x.Score).ThenBy(x=>x.Claim.Id).Take(count).Select(x=>x.Claim).ToArray();
     }
 }
-public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer)
+public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<string>? progress=null)
 {
     public async Task<IngestionReport> Run(string path,string? sourceId,SourceRole? role,bool reanalyze,CancellationToken ct)
     {
         path=Path.GetFullPath(path);
         if(!File.Exists(path)&&!Directory.Exists(path))throw new IOException("Source inaccessible; existing knowledge remains unchanged.");
+        progress?.Invoke("Préparation de l'ingestion (Ctrl+C pour interrompre et reprendre plus tard)");
         workspace.EnsureWritable();
         var baseline=workspace.SemanticRevision;var configuration=Json.Hash(Json.Serialize(workspace.Config));
         var config=workspace.Config; var bindings=workspace.Bindings(); var k=workspace.Load(); var decisions=workspace.Decisions();
@@ -32,7 +33,9 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer)
         }
         if(!bindings.TryGetValue(sourceId,out var root)||!Under(path,root)) throw new ArgumentException("Path is outside the selected source binding.");
         var definition=config.Sources.Single(s=>s.Id==sourceId);
+        progress?.Invoke("Inventaire des fichiers");
         var files=await Extractor.Inventory(path,root,config,ct);
+        progress?.Invoke($"Inventaire terminé : {files.Count} fichier(s) ; vérification des contextes");
         // Preflight every file before invoking Copilot: partial configuration must not start a batch.
         foreach(var file in files)
         {
@@ -41,22 +44,26 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer)
         }
         var warnings=new List<string>(); var changed=new List<string>(); var unchanged=0; var counts=Enum.GetValues<Contribution>().ToDictionary(c=>c,c=>0);
         var seen=new HashSet<string>(); var groups=new Dictionary<SourceDescriptor,List<Unit>>();
+        var fileNumber=0;
         foreach(var file in files)
         {
             ct.ThrowIfCancellationRequested();
             var relative=Path.GetRelativePath(root,file).Replace('\\','/'); seen.Add(relative);
+            var fileLabel=$"Fichier {++fileNumber}/{files.Count} — {relative}";
+            progress?.Invoke(fileLabel+" — lecture et empreinte");
             var descriptor=definition.Resolve(relative)!;var context=descriptor.Context;var effectiveRole=role??descriptor.Role;
             if(new FileInfo(file).Length>config.MaxFileBytes)throw new InvalidDataException("File exceeds maxFileBytes: "+relative);
             var bytes=await File.ReadAllBytesAsync(file,ct); if(bytes.Length>config.MaxFileBytes)throw new InvalidDataException("File grew beyond maxFileBytes."); var hash=Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
             var profile=k.Projects.SingleOrDefault(p=>p.Name.Equals(context.Project,StringComparison.OrdinalIgnoreCase));
             var key=Json.Hash(hash+Extractor.Version+config.AnalysisProfile+Json.Serialize(new{descriptor,definition.ExcelSheets,config.MaxFileBytes,project=profile})+effectiveRole);
             var previous=k.Sources.SingleOrDefault(s=>s.Active&&s.SourceId==sourceId&&s.RelativePath==relative);
-            if(!reanalyze&&previous?.CacheKey==key) { unchanged++; counts[Contribution.None]++; continue; }
+            if(!reanalyze&&previous?.CacheKey==key) { unchanged++; counts[Contribution.None]++; progress?.Invoke(fileLabel+" — inchangé, analyse réutilisée"); continue; }
             var versionId=Json.Hash(sourceId+"/"+relative+key);
             // Parse the exact bytes that were hashed, not a second read of a changing source.
             var snapshot=Path.Combine(workspace.Local,"inputs",Guid.NewGuid().ToString("N")+Path.GetExtension(file));
             Directory.CreateDirectory(Path.GetDirectoryName(snapshot)!);
             await File.WriteAllBytesAsync(snapshot,bytes,ct);
+            progress?.Invoke(fileLabel+" — extraction");
             Extraction extraction;
             try { extraction=Extractor.Read(snapshot,config.MaxFileBytes,config.Sources.Single(s=>s.Id==sourceId).ExcelSheets); }
             finally { File.Delete(snapshot); }
@@ -71,6 +78,7 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer)
             var fileClaims=new HashSet<string>();
             if(duplicate!=null&&!reanalyze)
             {
+                progress?.Invoke(fileLabel+" — contenu dupliqué, connaissances réutilisées");
                 foreach(var id in duplicate.ClaimIds)
                 {
                     var i=k.Claims.FindIndex(c=>c.Id==id); var old=k.Claims[i];
@@ -83,8 +91,11 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer)
             }
             else
             {
-                foreach(var batch in Batches(units,9000))
+                var batches=Batches(units,9000).ToArray();var batchNumber=0;
+                foreach(var batch in batches)
                 {
+                    var label=$"{fileLabel} — lot {++batchNumber}/{batches.Length}";
+                    progress?.Invoke(label+" — recherche du contexte");
                     var existing=Retrieval.Select(k,context.Description+" "+context.Notes+" "+string.Join(" ",batch.Select(u=>u.Locator+" "+u.Text)),context:context);
                     var request=Request(k,decisions,effectiveRole,batch,existing,"extract",context);
                     Analysis analysis;
@@ -92,10 +103,10 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer)
                     {
                         var imageSnapshot=Path.Combine(workspace.Local,"inputs",hash+Path.GetExtension(file));
                         await File.WriteAllBytesAsync(imageSnapshot,bytes,ct);
-                        try { analysis=await AnalyzeCached(request,imageSnapshot,key,reanalyze,ct); }
+                        try { analysis=await AnalyzeCached(request,imageSnapshot,key,reanalyze,ct,label); }
                         finally { File.Delete(imageSnapshot); }
                     }
-                    else analysis=await AnalyzeCached(request,null,key,reanalyze,ct);
+                    else analysis=await AnalyzeCached(request,null,key,reanalyze,ct,label);
                     foreach(var f in analysis.Findings)
                     {
                         var claim=Apply(k,f,effectiveRole,counts,context);
@@ -109,7 +120,9 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer)
             var groupKey=descriptor with{Role=effectiveRole};
             if(!groups.TryGetValue(groupKey,out var groupUnits)){groupUnits=[];groups.Add(groupKey,groupUnits);}
             groupUnits.AddRange(units);
+            progress?.Invoke(fileLabel+" — traité");
         }
+        progress?.Invoke("Vérification des sources supprimées et des preuves");
         // Deletions are inferred only from a successful full-root inventory and actual absence.
         if(Directory.Exists(path)&&Path.GetFullPath(path)==Path.GetFullPath(root))
             for(var i=0;i<k.Sources.Count;i++)
@@ -125,13 +138,16 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer)
             }
         RefreshObsolete(k);
         // Reconcile bounded groups; each group also retrieves the closest existing relationships.
-        foreach(var group in groups.Where(g=>g.Value.Count>1))
-            foreach(var batch in Batches(group.Value.ToArray(),9000))
+        var reconciliation=groups.Where(g=>g.Value.Count>1).SelectMany(g=>Batches(g.Value.ToArray(),9000).Select(batch=>(Group:g,Batch:batch))).ToArray();
+        var reconciliationNumber=0;
+        foreach(var (group,batch) in reconciliation)
             {
+                var label=$"Rapprochement entre fichiers — lot {++reconciliationNumber}/{reconciliation.Length}";
+                progress?.Invoke(label+" — recherche du contexte");
                 var context=group.Key.Context;var effectiveRole=group.Key.Role;
                 var existing=Retrieval.Select(k,context.Description+" "+string.Join(" ",batch.Select(u=>u.Text)),30,context);
                 var request=Request(k,decisions,effectiveRole,batch,existing,"reconcile",context);
-                var analysis=await AnalyzeCached(request,null,"reconcile-"+Json.Hash(string.Join("",group.Value.Select(u=>u.Id))),reanalyze,ct);
+                var analysis=await AnalyzeCached(request,null,"reconcile-"+Json.Hash(string.Join("",group.Value.Select(u=>u.Id))),reanalyze,ct,label);
                 foreach(var f in analysis.Findings.Where(f=>f.RelatedClaimIds.Length>0))
                 {
                     var claim=Apply(k,f,effectiveRole,counts,context); if(claim==null)continue; changed.Add(claim.Id);
@@ -141,12 +157,14 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer)
         RefreshObsolete(k);
         var report=new IngestionReport(Guid.NewGuid().ToString("N"),DateTimeOffset.UtcNow,sourceId,files.Count,unchanged,counts,warnings.ToArray(),changed.Distinct().Order().ToArray());
         k.Reports.Add(report); ct.ThrowIfCancellationRequested();
+        progress?.Invoke("Enregistrement des connaissances et du rapport");
         using(var publication=workspace.Lock())
         {
             if(workspace.SemanticRevision!=baseline||Json.Hash(Json.Serialize(workspace.Config))!=configuration)throw new RevisionConflictException("Knowledge or context changed during analysis. Retry ingestion; unchanged staged units will be reused.");
             workspace.Save(k);
         }
         // The index is disposable. A process interruption here is repaired by search/import.
+        progress?.Invoke($"Ingestion terminée : {files.Count} fichier(s), dont {unchanged} inchangé(s)");
         return report;
     }
     public static AnalysisRequest Request(Knowledge k,List<Decision> decisions,SourceRole role,Unit[] units,Claim[] existing,string phase,SourceContext? context=null)
@@ -165,11 +183,14 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer)
         }
         return request;
     }
-    private async Task<Analysis> AnalyzeCached(AnalysisRequest request,string? image,string salt,bool force,CancellationToken ct)
+    private async Task<Analysis> AnalyzeCached(AnalysisRequest request,string? image,string salt,bool force,CancellationToken ct,string label)
     {
         var key=Json.Hash(salt+Json.Serialize(request)); var path=Path.Combine(workspace.Local,"staging",key+".json");
-        if(!force&&File.Exists(path)) { var saved=Json.Read<Analysis>(File.ReadAllText(path)); CopilotAnalyzer.Validate(saved,request); return saved; }
-        var analysis=await analyzer.Analyze(request,image,ct); CopilotAnalyzer.Validate(analysis,request); Json.Write(path,analysis); return analysis;
+        if(!force&&File.Exists(path)) { var saved=Json.Read<Analysis>(File.ReadAllText(path)); CopilotAnalyzer.Validate(saved,request); progress?.Invoke(label+" — résultat intermédiaire réutilisé"); return saved; }
+        progress?.Invoke(label+" — attente de Copilot");
+        var analysis=await analyzer.Analyze(request,image,ct);
+        progress?.Invoke(label+" — réponse reçue, validation des preuves");
+        CopilotAnalyzer.Validate(analysis,request); Json.Write(path,analysis); return analysis;
     }
     private static IEnumerable<Unit[]> Batches(Unit[] units,int max)
     {

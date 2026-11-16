@@ -2,7 +2,7 @@
 
 Assistant local de connaissance technique : ingestion de documents et de code, mémoire sourcée, recherche, enquêtes avec Copilot CLI et dossiers de travail persistants. .NET 10, SQLite FTS5, Razor Pages, partage par Git et MCP en lecture seule.
 
-**Version 0.3.6.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
+**Version 0.3.7.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
 
 ## Installer ou mettre à jour
 
@@ -20,7 +20,7 @@ Sous Linux :
 dotnet restore --locked-mode
 dotnet test --no-restore
 dotnet pack src/BipKb -c Release --no-restore -o artifacts
-dotnet tool install BipKb --version 0.3.6 --add-source ./artifacts --tool-path ./artifacts/tools
+dotnet tool install BipKb --version 0.3.7 --add-source ./artifacts --tool-path ./artifacts/tools
 ```
 
 ### Si vous avez une base 0.1 ou 0.2
@@ -99,6 +99,17 @@ Le nettoyage réessaie brièvement les fichiers verrouillés et traite les fichi
 À partir de la 0.3.6, bip-kb demande la sortie machine `--output-format json` lorsque la CLI la propose. `doctor` indique `responseFormat: "jsonl"` (sinon `"text"` pour les anciennes CLI). Le lecteur utilise le dernier message assistant complet et exige une confirmation de fin réussie ; les événements de progression ne deviennent pas des réponses.
 
 Si le JSON produit par le modèle contient un retour à la ligne ou une tabulation non échappés dans une chaîne, bip-kb en corrige uniquement l'encodage, en conservant le texte. Les champs attendus et références restent contrôlés ; les autres erreurs ne sont pas réparées arbitrairement. Une mise à jour ne nécessite aucune nouvelle saisie du contexte : vérifier `bip-kb doctor --live`, puis relancer la même ingestion.
+
+### Suivre une ingestion longue
+
+L'ingestion affiche automatiquement son étape, le fichier en cours (`3/42`), le lot d'analyse, les résultats réutilisés et le rapprochement entre fichiers. Pendant une étape longue, un rappel toutes les dix secondes indique sa durée ; il confirme que bip-kb attend toujours, sans prétendre mesurer la progression interne de Copilot ni prédire le temps restant.
+
+```text
+[ingestion 00:12] Fichier 3/42 — Controllers/Commandes.cs — lot 1/2 — attente de Copilot
+[ingestion 00:30] Fichier 3/42 — Controllers/Commandes.cs — lot 1/2 — attente de Copilot — étape en cours depuis 18 s
+```
+
+Les messages vont sur stderr, sans contenu des documents, et sont désactivés avec `--json`. Ils s'arrêtent à la fin, à l'erreur ou à l'annulation. `Ctrl+C` interrompt ; relancer la même commande sans `--reanalyze` réutilise les lots terminés lorsque leur demande est inchangée. Une ingestion déjà démarrée avec une ancienne version ne reçoit pas rétroactivement ce suivi.
 
 ## Ingérer sans préciser le format
 

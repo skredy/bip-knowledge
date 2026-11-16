@@ -63,7 +63,7 @@ public static class Mcp
                 id=rawId.Clone(); var method=message.GetProperty("method").GetString(); object result;
                 switch(method)
                 {
-                    case "initialize": result=new{protocolVersion="2024-11-05",capabilities=new{tools=new{}},serverInfo=new{name="bip-kb",version="0.3.6"}};break;
+                    case "initialize": result=new{protocolVersion="2024-11-05",capabilities=new{tools=new{}},serverInfo=new{name="bip-kb",version="0.3.7"}};break;
                     case "ping": result=new{};break;
                     case "tools/list": result=new{tools=Names.Select(n=>new{name=n,description=n switch{"search"=>"Find evidence-backed claims","entity"=>"Read an entity and its claims","evidence"=>"Read claim evidence","relations"=>"Read related claims and decisions",_=>"Prepare a cited development context"},annotations=new{readOnlyHint=true,destructiveHint=false},inputSchema=new{type="object",properties=new Dictionary<string,object>{{n is "search" or "context"?"query":"id",new{type="string"}},{"project",new{type="string"}}},required=new[]{n is "search" or "context"?"query":"id"},additionalProperties=false}})};break;
                     case "tools/call":

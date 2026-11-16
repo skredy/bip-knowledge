@@ -10,7 +10,7 @@ public static class Cli
     public static async Task<int> Run(string[] args)
     {
         if(args.Length==1 && args[0] is "--help" or "-h")args=["help"];
-        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.3.6");return 0;}
+        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.3.7");return 0;}
         using var cancel=new CancellationTokenSource();
         Console.CancelKeyPress+=(_,e)=>{e.Cancel=true;cancel.Cancel();};
         try
@@ -89,7 +89,9 @@ All commands: --workspace <directory>, --json. Quote multiword arguments.
                     var input=parsed.IngestionInput();
                     var source=await new SourceSetup(workspace,Console.In,Console.Error,!Console.IsInputRedirected&&!parsed.Has("non-interactive")&&!parsed.Has("json"))
                         .Prepare(input,parsed.Get("source"),role,parsed.Get("context-file"),parsed.Has("describe"),cancel.Token);
-                    result=await new Ingestor(workspace,analyzer).Run(input,source,null,parsed.Has("reanalyze"),cancel.Token);break;
+                    await using(var progress=new IngestionProgress(parsed.Has("json")?null:Console.Error))
+                        result=await new Ingestor(workspace,analyzer,progress.Report).Run(input,source,null,parsed.Has("reanalyze"),cancel.Token);
+                    break;
                 case "search":result=new SearchEngine(workspace).Search(new(Required(1),parsed.Get("project"),parsed.Get("domain"),role,parsed.Get("intent")??"general",IncludeHistorical:parsed.Has("history")));break;
                 case "ask":
                     var quick=research.Start(Required(1),parsed.Get("project"));result=await research.Run(quick.Id,null,cancel.Token);break;

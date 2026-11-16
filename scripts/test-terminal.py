@@ -94,6 +94,7 @@ def main():
         def cli(*words, workspace=kb, expected=0):
             result = subprocess.run(command + list(map(str, words)) + ["--workspace", str(workspace), "--json"], capture_output=True, text=True, timeout=40)
             assert result.returncode == expected, result.stdout + result.stderr
+            assert '[ingestion ' not in result.stderr, result.stderr
             return json.loads(result.stdout if expected == 0 else result.stderr)
 
         def terminal(*words):
@@ -175,6 +176,9 @@ print(json.dumps({'type':'result','exitCode':0}))
             session.expect("Contexte réutilisé")
             transcript = session.finish()
             assert "Que contient cet ensemble" not in transcript and '"files": 3' in transcript
+            assert '[ingestion ' in transcript and 'Fichier 1/3' in transcript
+            assert 'attente de Copilot' in transcript and 'Rapprochement entre fichiers' in transcript
+            assert 'Ingestion terminée' in transcript
         calls = (root / "calls").read_text()
         assert cli("--ingest", corpus)["unchanged"] == 3
         assert (root / "calls").read_text() == calls
