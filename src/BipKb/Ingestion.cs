@@ -23,6 +23,7 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
         progress?.Invoke("Préparation de l'ingestion (Ctrl+C pour interrompre et reprendre plus tard)");
         progress?.Invoke(analyze?(guided?"Mode exploration guidée par Copilot":"Mode analyse par lots avec Copilot"):"Mode indexation locale — aucun appel Copilot ; analyse ciblée avec ask ou --analyze");
         if(analyze&&guided&&analyzer is not IExplorationAssistant)throw new NotSupportedException("Cet adaptateur ne prend pas en charge l'exploration guidée.");
+        progress?.Invoke("Chargement de la mémoire locale et des décisions");
         workspace.EnsureWritable();
         var baseline=workspace.SemanticRevision;var configuration=Json.Hash(Json.Serialize(workspace.Config));
         var config=workspace.Config; var bindings=workspace.Bindings(); var k=workspace.Load(); var decisions=workspace.Decisions();
@@ -72,6 +73,8 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
                 progress?.Invoke(fileLabel+(previous.Analyzed?" — inchangé, analyse réutilisée":previous.Exploration!=null?" — inchangé, analyse partielle conservée ; --reanalyze pour la réexaminer":" — inchangé, indexation réutilisée"));continue;
             }
             var versionId=Json.Hash(sourceId+"/"+relative+key);
+            if(analyze&&guided)
+                progress?.Invoke(fileLabel+" — "+(reanalyze?"réanalyse demandée":pending?"reprise d'une exploration non publiée":previous==null?"première analyse de cette source":previous.Hash!=hash?"contenu du fichier modifié":previous.CacheKey!=key?"contexte ou profil d'extraction modifié":"analyse des données précédemment indexées"));
             // Parse the exact bytes that were hashed, not a second read of a changing source.
             var snapshot=Path.Combine(workspace.Local,"inputs",Guid.NewGuid().ToString("N")+Path.GetExtension(file));
             Directory.CreateDirectory(Path.GetDirectoryName(snapshot)!);

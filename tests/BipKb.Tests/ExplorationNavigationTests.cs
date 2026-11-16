@@ -64,13 +64,11 @@ public class ExplorationNavigationTests
         using var diagnostic=System.Text.Json.JsonDocument.Parse(File.ReadAllText(Assert.Single(Directory.GetFiles(directory))));
         Assert.Equal(2,diagnostic.RootElement.GetProperty("responses").GetArrayLength());
     }
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task InvalidEvidenceOrCoverageIsNeverRetriedEvenWhenNavigationIsAlsoInvalid(bool coverage)
+    [Fact]
+    public async Task InvalidEvidenceIsNeverRetriedEvenWhenNavigationIsAlsoInvalid()
     {
         using var s=new Sandbox();var calls=0;var reply=Reply() with{Reads=[new(0,10)]};
-        reply=coverage?reply with{ReviewRanges=[new(1,1,"analyzed","")]}:reply with{Findings=[new Finding{Entity="E",Statement="Unsupported",Kind="rule",Contribution=Contribution.New,EvidenceIds=["invented"]}]};
+        reply=reply with{Findings=[new Finding{Entity="E",Statement="Unsupported",Kind="rule",Contribution=Contribution.New,EvidenceIds=["invented"]}],ReviewRanges=[new(1,1,"analyzed","")]};
         await Assert.ThrowsAsync<InvalidDataException>(()=>CopilotResponses.Run<ExplorationReply>("prompt","explore",s.Workspace.Local,(_,_)=>
         {calls++;return Task.FromResult(Json.Serialize(reply));},r=>DocumentExplorer.Validate(r,Request()),default));
         Assert.Equal(1,calls);

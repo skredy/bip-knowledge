@@ -76,7 +76,29 @@ public class ExplorationTests
             ReviewRanges=mode switch{"unseen"=>[new(4,1,"analyzed","")],"overlap"=>[new(1,1,"analyzed",""),new(1,1,"analyzed","")],"duplicate"=>[new(1,1,"analyzed","")],_=>[new(1,3,"analyzed","")]}
         }};
         var file=s.File("rules.md","# A\nCommande A\n# B\nCommande B\n# C\nCommande C\n# D\nCommande D");
-        await Assert.ThrowsAsync<InvalidDataException>(()=>Ingest(s,p,file));Assert.Empty(s.Workspace.Load().Claims);
+        await Assert.ThrowsAsync<CopilotCoverageException>(()=>Ingest(s,p,file));Assert.Empty(s.Workspace.Load().Claims);
+    }
+    [Fact]
+    public async Task WholeVisibleReviewKeepsSkippedEmptyRowsSeparateFromAnalyzedRows()
+    {
+        using var s=new Sandbox();Unit[] units=[new("a","row:1","Commande A"),new("empty","row:2","Headers: statut"),new("b","row:3","Commande B")];
+        var p=new Planner{Profile=DocumentExplorer.WideProfile,Handler=r=>Advance(r) with{Reviews=[],ReviewVisible=new("analyzed","")}};
+        var summary=await new DocumentExplorer(s.Workspace,p).Run("test","sheet.xlsx","key",".xlsx",units,
+            new Dictionary<string,UnitHeader>{{"empty",new("Sheet","Headers: statut")}},[],null,false,new(2),
+            (read,plan,budget)=>new("target",read,[],[],[],"explore"),_=>{},default);
+        Assert.Equal(new[]{1,3},Assert.Single(p.Seen).Visible.Select(v=>v.Number));
+        Assert.True(summary.Complete);Assert.Equal(2,summary.AnalyzedUnits);Assert.Equal(1,summary.EmptyUnits);
+        Assert.Equal("empty",summary.Coverage.Single(r=>r.Start==2).Status);
+    }
+    [Fact]
+    public async Task WholeVisibleReviewResumesWithoutMarkingUnseenUnitsAndDoesNotReanalyzePublishedSource()
+    {
+        using var s=new Sandbox();var file=s.File("rules.md","# A\nCommande A\n# B\nCommande B\n# C\nCommande C");
+        var p=new Planner{Handler=r=>r.Step==1?Advance(r) with{Reads=[new(1,1),new(3,1)]}:Advance(r) with{Reviews=[],ReviewVisible=new("analyzed","")}};
+        await Assert.ThrowsAsync<InvalidOperationException>(()=>Ingest(s,p,file,2));Assert.Empty(s.Workspace.Load().Sources);
+        var status=new DocumentExplorer(s.Workspace,p).StatusFor("test","rules.md");Assert.Equal(1,status!.RemainingUnits);
+        await Ingest(s,p,file,2);Assert.Equal(3,p.Seen.Count);Assert.True(Assert.Single(s.Workspace.Load().Sources).Analyzed);
+        var repeat=await Ingest(s,p,file);Assert.Equal(1,repeat.Unchanged);Assert.Equal(0,repeat.UnanalyzedFiles);Assert.Equal(3,p.Seen.Count);
     }
     [Fact]
     public async Task CompactCoverageCannotClaimAnUnsupportedImageWasObserved()

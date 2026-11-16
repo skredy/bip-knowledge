@@ -7,22 +7,26 @@ public sealed record CoverageRange(int Start,int Count,string Status,string Reas
 public sealed record DocumentSection(string Name,int Start,int Count,string[] Preview);
 public sealed record DocumentMatch(int Number,string Locator,string Preview);
 public sealed record VisibleUnit(int Number,Unit Unit);
+public sealed record VisibleReview(string Status,string Reason);
 public sealed record ExplorationRequest(string Protocol,string Document,string Format,int Step,int TotalUnits,
     int RemainingUnits,UnitRange[] Pending,int SectionCount,int CatalogOffset,DocumentSection[] Catalog,
     int MatchCount,DocumentMatch[] Matches,VisibleUnit[] Visible,AnalysisRequest Context,string Plan,string Feedback,string[] Limitations);
 public sealed record ExplorationReply(string Action,string Plan,string Summary,UnitRange[] Reads,string Query,int Offset,
-    List<Finding> Findings,UnitReview[] Reviews,string[] Questions,string VisualStatus,RangeExclusion[]? Exclusions=null,CoverageRange[]? ReviewRanges=null);
+    List<Finding> Findings,UnitReview[] Reviews,string[] Questions,string VisualStatus,RangeExclusion[]? Exclusions=null,CoverageRange[]? ReviewRanges=null,VisibleReview? ReviewVisible=null);
 public sealed record ExplorationSummary(string Protocol,string RunId,string Plan,string Summary,int TotalUnits,int AnalyzedUnits,
     int ExcludedUnits,int UnresolvedUnits,int EmptyUnits,int Steps,CoverageRange[] Coverage,string[] Questions,string VisualStatus)
 {
     [System.Text.Json.Serialization.JsonIgnore] public bool Complete=>AnalyzedUnits+EmptyUnits==TotalUnits;
 }
 public sealed record ExplorationStatus(string Source,string RelativePath,string SourceKey,string RunId,int Step,int RemainingUnits,string State,string Plan,string Profile="arguments-v1");
-// Only navigation errors may request a bounded correction; provenance errors never use this type.
-public sealed class CopilotNavigationException(string message,string correction):Exception("Exploration Copilot refusée : "+message)
+// Corrections concern response bookkeeping only, never unsupported findings or image observations.
+public abstract class CopilotCorrectionException(string kind,string message,string correction):Exception("Exploration Copilot refusée : "+message)
 {
+    public string Kind {get;}=kind;
     public string Correction {get;}=correction;
 }
+public sealed class CopilotNavigationException(string message,string correction):CopilotCorrectionException("NAVIGATION",message,correction);
+public sealed class CopilotCoverageException(string message,string correction):CopilotCorrectionException("COVERAGE",message,correction);
 public interface IExplorationAssistant
 {
     Task<string> ReadingProfile(CancellationToken ct)=>Task.FromResult(DocumentExplorer.LegacyProfile);
@@ -60,6 +64,12 @@ public sealed class DocumentExplorer(Workspace workspace,IExplorationAssistant a
     }
     public static DocumentSection[] Catalog(Unit[] units)=>units.Select((u,i)=>(Unit:u,Number:i+1)).GroupBy(x=>Section(x.Unit))
         .Select(g=>new DocumentSection(Short(g.Key,160),g.First().Number,g.Count(),g.Take(2).Select(x=>Short(x.Unit.Text,160)).ToArray())).ToArray();
+    public static string CoverageInstructions(ExplorationRequest request)
+    {
+        var ranges=Ranges(request.Visible.Select(v=>v.Number).Distinct().Order()).ToArray();
+        var numbers=ranges.Length==0?"none":string.Join(", ",ranges.Select(r=>$"{r.Start}..{(long)r.Start+r.Count-1}"));
+        return $"VISIBLE COVERAGE: {request.Visible.Length} supplied units; exact allowed unit numbers (inclusive intervals): {numbers}. Gaps are NOT supplied: never bridge them. Use unit numbers, NOT spreadsheet row coordinates. If you examined ALL visible units, prefer reviewVisible={{\"status\":\"analyzed\",\"reason\":\"\"}}, with reviews=[] and reviewRanges=[]. bip-kb applies it ONLY to the supplied units, including gaps correctly. Use unresolved with a reason if they cannot be interpreted. Otherwise reviewVisible=null and classify selected visible units using reviews or reviewRanges, without overlap or duplication. No visible units means reviewVisible=null and both arrays empty. Nothing previously requested, seen in earlier turns or shown only in catalog/pending is supplied evidence for this turn. Coverage does not create findings; assertions still require explicit evidenceIds.";
+    }
     public static void ValidateSummary(ExplorationSummary s,int units)
     {
         if(s.Protocol!=Protocol||!Guid.TryParseExact(s.RunId,"N",out _)||string.IsNullOrWhiteSpace(s.Plan)||s.Plan.Length>1800||string.IsNullOrWhiteSpace(s.Summary)||s.Summary.Length>2000||s.TotalUnits!=units||s.Steps is <1 or >512||s.Coverage==null||s.Questions==null||s.Questions.Length>50||s.Questions.Any(q=>string.IsNullOrWhiteSpace(q)||q.Length>500)||s.VisualStatus is not ("not-applicable" or "observed" or "unreadable" or "unsupported"))throw new InvalidDataException("Invalid exploration summary.");
@@ -83,17 +93,30 @@ public sealed class DocumentExplorer(Workspace workspace,IExplorationAssistant a
         if(!image&&reply.VisualStatus!="not-applicable")Fail("observation visuelle sans image fournie.");
         if(image&&reply.VisualStatus=="observed"&&request.Visible.Length==0)Fail("image non fournie dans cet échange.");
         CopilotAnalyzer.Validate(new(reply.Findings),request.Context with{Units=request.Visible.Select(v=>v.Unit).ToArray()});
+        // Unsupported image observations are not repairable as coverage formatting.
+        if(image&&reply.VisualStatus!="observed"&&(reply.Findings.Count>0||reply.Reviews?.Any(r=>r?.Status=="analyzed")==true||reply.ReviewRanges?.Any(r=>r?.Status=="analyzed")==true||reply.ReviewVisible?.Status=="analyzed"))Fail("image non observée : aucune conclusion visuelle ni couverture complète autorisée.");
         var visible=request.Visible.Select(v=>v.Unit.Id).ToHashSet();
         if(reply.Reviews==null||reply.Reviews.Length>200||reply.Reviews.Any(r=>r==null||!visible.Contains(r.UnitId)||r.Status is not ("analyzed" or "excluded" or "unresolved")||r.Reason==null||r.Reason.Length>500||r.Status!="analyzed"&&string.IsNullOrWhiteSpace(r.Reason))||reply.Reviews.Select(r=>r.UnitId).Distinct().Count()!=reply.Reviews.Length)Fail("couverture non fournie, dupliquée ou sans justification.");
         var ranges=reply.ReviewRanges??[];var byNumber=request.Visible.ToDictionary(v=>v.Number,v=>v.Unit.Id);var reviewed=reply.Reviews.Select(r=>r.UnitId).ToHashSet();
-        if(ranges.Length>200)Fail("trop de plages de couverture.");
-        foreach(var range in ranges)
+        [System.Diagnostics.CodeAnalysis.DoesNotReturn] void CoverageFailure(string reason)=>throw new CopilotCoverageException(reason,
+            "Invalid coverage: "+reason+" "+CoverageInstructions(request)+" Return a complete JSON response to the ORIGINAL request; the rejected response was not accepted. Never invent evidence or mark unseen units as analyzed.");
+        if(reply.ReviewVisible is {} all)
         {
+            if(all.Status is not ("analyzed" or "excluded" or "unresolved")||all.Reason==null||all.Reason.Length>500||all.Status!="analyzed"&&string.IsNullOrWhiteSpace(all.Reason))Fail("reviewVisible : statut ou justification invalide.");
+            if(reply.Reviews.Length>0||ranges.Length>0)CoverageFailure("reviewVisible ne peut pas être combiné avec reviews ou reviewRanges.");
+            if(request.Visible.Length==0)CoverageFailure("reviewVisible : aucune unité fournie dans cet échange.");
+        }
+        if(ranges.Length>200)Fail("trop de plages de couverture.");
+        for(var index=0;index<ranges.Length;index++)
+        {
+            var range=ranges[index];
             if(range==null||range.Start<1||range.Count is <1 or >200||(long)range.Start+range.Count-1>request.TotalUnits||range.Status is not ("analyzed" or "excluded" or "unresolved")||range.Reason==null||range.Reason.Length>500||range.Status!="analyzed"&&string.IsNullOrWhiteSpace(range.Reason))Fail("plage de couverture invalide.");
             for(var n=range.Start;n<range.Start+range.Count;n++)
-                if(!byNumber.TryGetValue(n,out var id)||!reviewed.Add(id))Fail("la couverture doit citer uniquement des unités visibles, sans doublons ni trous.");
+            {
+                if(!byNumber.TryGetValue(n,out var id))CoverageFailure($"reviewRanges[{index}] : unité {n} absente des {request.Visible.Length} unités fournies.");
+                if(!reviewed.Add(id))CoverageFailure($"reviewRanges[{index}] : unité {n} déjà déclarée dans reviews ou une autre plage.");
+            }
         }
-        if(image&&reply.VisualStatus!="observed"&&(reply.Findings.Count>0||reply.Reviews.Any(r=>r.Status=="analyzed")||ranges.Any(r=>r.Status=="analyzed")))Fail("image non observée : aucune conclusion visuelle ni couverture complète autorisée.");
         if(reply.Action=="finish"&&string.IsNullOrWhiteSpace(reply.Summary))Fail("synthèse finale manquante.");
         // Validate all evidence and coverage FIRST, including replies with invalid navigation.
         ValidateNavigation(reply,request);
@@ -193,6 +216,8 @@ public sealed class DocumentExplorer(Workspace workspace,IExplorationAssistant a
             }
             accept(new(reply.Findings));plan=reply.Plan;
             foreach(var review in reply.Reviews)coverage[positions[review.UnitId]]=review;
+            if(reply.ReviewVisible is {} all)
+                foreach(var item in request.Visible)coverage[positions[item.Unit.Id]]=new(item.Unit.Id,all.Status,all.Reason);
             foreach(var range in reply.ReviewRanges??[])
                 for(var n=range.Start;n<range.Start+range.Count;n++)coverage[n-1]=new(units[n-1].Id,range.Status,range.Reason);
             foreach(var exclusion in reply.Exclusions??[])
