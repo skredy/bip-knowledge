@@ -11,15 +11,16 @@ public sealed record ExplorationRequest(string Protocol,string Document,string F
     int RemainingUnits,UnitRange[] Pending,int SectionCount,int CatalogOffset,DocumentSection[] Catalog,
     int MatchCount,DocumentMatch[] Matches,VisibleUnit[] Visible,AnalysisRequest Context,string Plan,string Feedback,string[] Limitations);
 public sealed record ExplorationReply(string Action,string Plan,string Summary,UnitRange[] Reads,string Query,int Offset,
-    List<Finding> Findings,UnitReview[] Reviews,string[] Questions,string VisualStatus,RangeExclusion[]? Exclusions=null);
+    List<Finding> Findings,UnitReview[] Reviews,string[] Questions,string VisualStatus,RangeExclusion[]? Exclusions=null,CoverageRange[]? ReviewRanges=null);
 public sealed record ExplorationSummary(string Protocol,string RunId,string Plan,string Summary,int TotalUnits,int AnalyzedUnits,
     int ExcludedUnits,int UnresolvedUnits,int EmptyUnits,int Steps,CoverageRange[] Coverage,string[] Questions,string VisualStatus)
 {
     [System.Text.Json.Serialization.JsonIgnore] public bool Complete=>AnalyzedUnits+EmptyUnits==TotalUnits;
 }
-public sealed record ExplorationStatus(string Source,string RelativePath,string SourceKey,string RunId,int Step,int RemainingUnits,string State,string Plan);
+public sealed record ExplorationStatus(string Source,string RelativePath,string SourceKey,string RunId,int Step,int RemainingUnits,string State,string Plan,string Profile="arguments-v1");
 public interface IExplorationAssistant
 {
+    Task<string> ReadingProfile(CancellationToken ct)=>Task.FromResult(DocumentExplorer.LegacyProfile);
     Task<ExplorationReply> Explore(ExplorationRequest request,string? image,CancellationToken ct);
 }
 public sealed class ExplorationBudget
@@ -34,6 +35,7 @@ public sealed class ExplorationBudget
 public sealed class DocumentExplorer(Workspace workspace,IExplorationAssistant assistant,Action<string>? progress=null)
 {
     public const string Protocol="guided-v1";
+    public const string LegacyProfile="arguments-v1",WideProfile="stdin-v1";
     private string StatusPath(string source,string relative)=>Path.Combine(workspace.Local,"exploration","status",Json.Hash(source+"/"+relative)+".json");
     public ExplorationStatus? StatusFor(string source,string relative)
     {
@@ -83,36 +85,51 @@ public sealed class DocumentExplorer(Workspace workspace,IExplorationAssistant a
         CopilotAnalyzer.Validate(new(reply.Findings),request.Context with{Units=request.Visible.Select(v=>v.Unit).ToArray()});
         var visible=request.Visible.Select(v=>v.Unit.Id).ToHashSet();
         if(reply.Reviews==null||reply.Reviews.Length>200||reply.Reviews.Any(r=>r==null||!visible.Contains(r.UnitId)||r.Status is not ("analyzed" or "excluded" or "unresolved")||r.Reason==null||r.Reason.Length>500||r.Status!="analyzed"&&string.IsNullOrWhiteSpace(r.Reason))||reply.Reviews.Select(r=>r.UnitId).Distinct().Count()!=reply.Reviews.Length)Fail("couverture non fournie, dupliquée ou sans justification.");
-        if(image&&reply.VisualStatus!="observed"&&(reply.Findings.Count>0||reply.Reviews.Any(r=>r.Status=="analyzed")))Fail("image non observée : aucune conclusion visuelle ni couverture complète autorisée.");
+        var ranges=reply.ReviewRanges??[];var byNumber=request.Visible.ToDictionary(v=>v.Number,v=>v.Unit.Id);var reviewed=reply.Reviews.Select(r=>r.UnitId).ToHashSet();
+        if(ranges.Length>200)Fail("trop de plages de couverture.");
+        foreach(var range in ranges)
+        {
+            if(range==null||range.Start<1||range.Count is <1 or >200||(long)range.Start+range.Count-1>request.TotalUnits||range.Status is not ("analyzed" or "excluded" or "unresolved")||range.Reason==null||range.Reason.Length>500||range.Status!="analyzed"&&string.IsNullOrWhiteSpace(range.Reason))Fail("plage de couverture invalide.");
+            for(var n=range.Start;n<range.Start+range.Count;n++)
+                if(!byNumber.TryGetValue(n,out var id)||!reviewed.Add(id))Fail("la couverture doit citer uniquement des unités visibles, sans doublons ni trous.");
+        }
+        if(image&&reply.VisualStatus!="observed"&&(reply.Findings.Count>0||reply.Reviews.Any(r=>r.Status=="analyzed")||ranges.Any(r=>r.Status=="analyzed")))Fail("image non observée : aucune conclusion visuelle ni couverture complète autorisée.");
         if(reply.Action=="finish"&&string.IsNullOrWhiteSpace(reply.Summary))Fail("synthèse finale manquante.");
     }
     public async Task<ExplorationSummary> Run(string source,string relative,string key,string format,Unit[] units,
         IReadOnlyDictionary<string,UnitHeader> headers,string[] limitations,string? image,bool force,ExplorationBudget budget,
-        Func<Unit[],string,AnalysisRequest> context,Action<Analysis> accept,CancellationToken ct)
+        Func<Unit[],string,int,AnalysisRequest> context,Action<Analysis> accept,CancellationToken ct)
     {
         var catalog=Catalog(units);var positions=units.Select((u,i)=>(u.Id,i)).ToDictionary(p=>p.Id,p=>p.i);
         var coverage=new UnitReview?[units.Length];
         for(var i=0;i<units.Length;i++)
             if(headers.TryGetValue(units[i].Id,out var h)&&units[i].Text==h.Prefix)coverage[i]=new(units[i].Id,"empty","Ligne Excel sans données ; en-têtes conservés ailleurs.");
-        var visible=image==null?Array.Empty<VisibleUnit>():units.Select((u,i)=>new VisibleUnit(i+1,u)).ToArray();
+        var previousStatus=StatusFor(source,relative);
+        var profile=!force&&previousStatus?.SourceKey==key?previousStatus.Profile:await assistant.ReadingProfile(ct);
+        if(profile is not (LegacyProfile or WideProfile))throw new InvalidDataException("Profil de lecture inconnu ; mettez bip-kb à jour avant de reprendre.");
+        var wide=profile==WideProfile;var readBudget=wide?120_000:8500;var requestBudget=wide?160_000:18000;
+        VisibleUnit[] Read(IEnumerable<int> numbers)=> (AnalysisBatches.Create(numbers.Select(n=>units[n-1]),headers,readBudget).FirstOrDefault()??[])
+            .Select(u=>new VisibleUnit(positions[u.Id]+1,u)).ToArray();
+        var visible=image!=null?units.Select((u,i)=>new VisibleUnit(i+1,u)).ToArray():wide?Read(Enumerable.Range(1,Math.Min(200,units.Length))):[];
         var matches=Array.Empty<DocumentMatch>();var matchCount=0;var offset=0;var plan="";var feedback="Vue d'ensemble : les aperçus sont incomplets et ne sont pas des unités analysées.";
         var questions=new HashSet<string>();var visual="not-applicable";
-        var statusPath=StatusPath(source,relative);var previousStatus=StatusFor(source,relative);
+        if(wide)feedback=$"Vue d'ensemble et première lecture : {visible.Length}/{units.Length} unités complètes fournies. Le catalogue décrit les sections ; seuls visible[] sont citables. Poursuivre les sections restantes via read/pending.";
+        var statusPath=StatusPath(source,relative);
         var runId=!force&&previousStatus?.SourceKey==key?previousStatus.RunId:Guid.NewGuid().ToString("N");
         void Status(int step,string state)
         {
-            Json.Write(statusPath,new ExplorationStatus(source,relative,key,runId,step,coverage.Count(c=>c==null),state,plan));
+            Json.Write(statusPath,new ExplorationStatus(source,relative,key,runId,step,coverage.Count(c=>c==null),state,plan,profile));
         }
         for(var step=1;step<=512;step++)
         {
             ct.ThrowIfCancellationRequested();
-            var supplied=visible.Select(v=>v.Unit).ToArray();var existing=context(supplied,plan);
+            var supplied=visible.Select(v=>v.Unit).ToArray();var existing=context(supplied,plan,requestBudget);
             // Context() selects claims and decisions; evidence is supplied only once in Visible.
             existing=existing with{Units=[]};
             var request=new ExplorationRequest(Protocol,relative,format,step,units.Length,coverage.Count(c=>c==null),
                 Ranges(coverage.Select((c,i)=>(c,i)).Where(x=>x.c==null).Select(x=>x.i+1)).Take(12).ToArray(),
                 catalog.Length,offset,catalog.Skip(offset).Take(8).ToArray(),matchCount,matches,visible,existing,plan,feedback,limitations.Take(8).Select(l=>Short(l,250)).ToArray());
-            while(Json.Serialize(request).Length>18000)
+            while(Json.Serialize(request).Length>requestBudget)
             {
                 if(request.Context.Existing.Length>0)
                 {
@@ -136,7 +153,7 @@ public sealed class DocumentExplorer(Workspace workspace,IExplorationAssistant a
             {
                 if(!budget.TryUse())
                 {Status(step,"paused");throw new InvalidOperationException($"Exploration en pause après {budget.Used} nouveaux appels ; {request.RemainingUnits}/{units.Length} unités restent à classer dans ce fichier. Aucune révision inachevée publiée. Relancez avec --analyze, sans --reanalyze, pour reprendre. Budget : --max-calls.");}
-                Status(step,"running");progress?.Invoke($"Exploration — échange {step}, appel {budget.Used}/{budget.Limit}, {request.RemainingUnits}/{units.Length} unités à classer — attente de Copilot");
+                Status(step,"running");progress?.Invoke($"Exploration — échange {step}, appel {budget.Used}/{budget.Limit}, {request.RemainingUnits}/{units.Length} unités à classer, {request.Visible.Length} fournies ({Json.Serialize(request).Length:N0} caractères) — attente de Copilot");
                 try
                 {
                     reply=await assistant.Explore(request,image!=null&&request.Visible.Length>0?image:null,ct);Validate(reply,request);
@@ -150,6 +167,8 @@ public sealed class DocumentExplorer(Workspace workspace,IExplorationAssistant a
             }
             accept(new(reply.Findings));plan=reply.Plan;
             foreach(var review in reply.Reviews)coverage[positions[review.UnitId]]=review;
+            foreach(var range in reply.ReviewRanges??[])
+                for(var n=range.Start;n<range.Start+range.Count;n++)coverage[n-1]=new(units[n-1].Id,range.Status,range.Reason);
             foreach(var exclusion in reply.Exclusions??[])
                 for(var n=exclusion.Start;n<exclusion.Start+exclusion.Count;n++)coverage[n-1]=new(units[n-1].Id,"excluded","Exclusion de plage (lecture non garantie) : "+exclusion.Reason);
             foreach(var question in reply.Questions)questions.Add(question);
@@ -172,8 +191,7 @@ public sealed class DocumentExplorer(Workspace workspace,IExplorationAssistant a
             {
                 case "read":
                     var numbers=reply.Reads.SelectMany(r=>Enumerable.Range(r.Start,r.Count)).Distinct().ToArray();
-                    var selected=AnalysisBatches.Create(numbers.Select(n=>units[n-1]),headers,8500).FirstOrDefault()??[];
-                    visible=selected.Select(u=>new VisibleUnit(positions[u.Id]+1,u)).ToArray();
+                    visible=Read(numbers);
                     feedback=$"{visible.Length}/{numbers.Length} unités demandées fournies intégralement. Les autres restent à lire ; utiliser les numéros visibles et pending pour poursuivre.";break;
                 case "search":
                     var found=units.Select((u,i)=>(u,i)).Where(x=>x.u.Text.Contains(reply.Query,StringComparison.OrdinalIgnoreCase)||x.u.Locator.Contains(reply.Query,StringComparison.OrdinalIgnoreCase)).ToArray();

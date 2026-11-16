@@ -2,7 +2,7 @@
 
 Assistant local de connaissance technique : ingestion de documents et de code, mémoire sourcée, recherche, enquêtes avec Copilot CLI et dossiers de travail persistants. .NET 10, SQLite FTS5, Razor Pages, partage par Git et MCP en lecture seule.
 
-**Version 0.4.0.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
+**Version 0.4.1.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
 
 ## Installer ou mettre à jour
 
@@ -20,7 +20,7 @@ Sous Linux :
 dotnet restore --locked-mode
 dotnet test --no-restore
 dotnet pack src/BipKb -c Release --no-restore -o artifacts
-dotnet tool install BipKb --version 0.4.0 --add-source ./artifacts --tool-path ./artifacts/tools
+dotnet tool install BipKb --version 0.4.1 --add-source ./artifacts --tool-path ./artifacts/tools
 ```
 
 ### Si vous avez une base 0.1 ou 0.2
@@ -96,6 +96,12 @@ Les connaissances et décisions déjà publiées sont conservées si leurs sourc
 Aucune migration n'est nécessaire depuis la 0.3.x. Les membres d'une équipe doivent mettre à jour leur outil avant de lire une mémoire enrichie avec ces nouveaux indicateurs. Un processus déjà lancé conserve son ancien comportement : l'interrompre avec Ctrl+C puis relancer après mise à jour pour changer de mode.
 
 ### Exploration guidée par Copilot — 0.4.0
+
+**Depuis la 0.4.1**, lorsque l'aide de Copilot annonce l'entrée par flux (`piped stdin`), les nouvelles analyses transmettent les demandes par stdin UTF-8. Les lectures peuvent contenir jusqu'à 120 000 caractères de preuves et 200 unités, avec un budget total de 160 000 caractères pour le contexte JSON. La première demande contient déjà les premières unités complètes et le catalogue : un petit document peut donc être analysé en un échange. Les documents plus grands restent explorés par sections choisies par Copilot. La progression indique le nombre d'unités effectivement transmises. Les plages de couverture compactes sont vérifiées unité par unité ; elles n'autorisent pas à déclarer analysées des cellules absentes de la demande.
+
+`bip-kb doctor` indique `promptTransport: "stdin"` ou `"arguments"`. Une CLI qui n'annonce pas stdin garde le parcours compatible. **Une analyse 0.4.0 interrompue conserve son ancien profil pour réutiliser ses échanges** : reprendre avec `--analyze`. Pour bénéficier des lectures élargies sur ce même fichier, relancer volontairement avec `--reanalyze` après mise à jour ; cela recommence l'analyse. Les analyses déjà publiées restent disponibles jusqu'à la publication de la nouvelle. Aucun nettoyage manuel des caches n'est nécessaire.
+
+Chaque échange utilise encore un nouveau processus CLI. Les demandes plus grandes réduisent le nombre d'allers-retours possibles, mais consomment davantage de contexte par appel ; leur durée et la qualité des conclusions dépendent du modèle. Les budgets sont exprimés en caractères, pas en tokens.
 
 Copilot commence par une vue d'ensemble paginée du document (feuilles/pages, nombres d'unités, aperçus). Il construit un plan, choisit les plages à lire, cherche dans le texte extrait et peut rapprocher des unités éloignées. Les limites de transport bornent les réponses de lecture ; elles ne constituent plus un découpage préalable de tout le fichier. L'exploration est **par fichier**, orientée par le contexte projet et les assertions existantes retrouvées ; ce n'est pas un agent ayant accès à tout le poste ou à tous les dépôts.
 

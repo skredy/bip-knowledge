@@ -17,6 +17,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tool")
     parser.add_argument("--dotnet", default="dotnet")
+    parser.add_argument("--stdin", action="store_true", help="Advertise stdin and exercise wide initial document reads")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parent.parent
     command = [str(Path(args.tool).resolve())] if args.tool else [args.dotnet, str(repo / "src/BipKb/bin/Debug/net10.0/BipKb.dll")]
@@ -26,6 +27,8 @@ def main():
         fixture = root / "copilot-guided.js"
         shutil.copyfile(repo / "tests/BipKb.Tests/Fixtures/copilot-guided.js", fixture)
         fixture.chmod(0o700)
+        if args.stdin:
+            (root / "stdin-enabled").touch()
 
         def run(*words, workspace=kb, expected=0):
             result = subprocess.run(command+list(map(str, words))+["--workspace", str(workspace), "--json"], capture_output=True, text=True, timeout=90)
@@ -56,7 +59,7 @@ def main():
             else:
                 source.write_text("CREATE TABLE dbo.Commande(Id int PRIMARY KEY, Statut int);")
             words = ["--ingest", source, "--source", extension, "--context-file", descriptor, "--analyze"]
-            if extension == "xls":
+            if extension == "xls" and not args.stdin:
                 before = len(list((kb / "memory/changes").glob("*.json")))
                 failure = run(*words, "--max-calls", 1, expected=1)
                 assert "en pause" in failure["error"]
@@ -70,6 +73,9 @@ def main():
             assert report["mode"] == "guided" and report["unanalyzedFiles"] == 0
             status = run("analysis", extension)
             summary = status["published"][0]["exploration"]
+            if args.stdin:
+                assert summary["steps"] == 1
+                assert status["local"][0]["profile"] == "stdin-v1"
             assert summary["analyzedUnits"]+summary["emptyUnits"] == summary["totalUnits"]
             assert status["local"][0]["state"] == "published"
             calls = (root / "guided-calls.jsonl").read_text()

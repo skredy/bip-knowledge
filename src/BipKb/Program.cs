@@ -10,7 +10,7 @@ public static class Cli
     public static async Task<int> Run(string[] args)
     {
         if(args.Length==1 && args[0] is "--help" or "-h")args=["help"];
-        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.4.0");return 0;}
+        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.4.1");return 0;}
         using var cancel=new CancellationTokenSource();
         Console.CancelKeyPress+=(_,e)=>{e.Cancel=true;cancel.Cancel();};
         try
@@ -119,7 +119,7 @@ All commands: --workspace <directory>, --json. Quote multiword arguments.
                     var publishedSources=workspace.Load().Sources.Where(s=>s.Active&&s.SourceId==analysisSource).ToArray();
                     var localStatuses=Directory.Exists(analysisStatus)?Directory.GetFiles(analysisStatus,"*.json").Select(f=>Json.Read<ExplorationStatus>(File.ReadAllText(f))).Where(s=>s.Source==analysisSource).ToArray():[];
                     result=new{published=publishedSources.Where(s=>s.Exploration!=null).Select(s=>new{s.RelativePath,s.Analyzed,s.Exploration}),
-                        local=localStatuses.Select(s=>new{s.RelativePath,s.Step,s.RemainingUnits,s.Plan,state=publishedSources.Any(p=>p.Exploration?.RunId==s.RunId)?"published":s.State,
+                        local=localStatuses.Select(s=>new{s.RelativePath,s.Step,s.RemainingUnits,s.Plan,s.Profile,state=publishedSources.Any(p=>p.Exploration?.RunId==s.RunId)?"published":s.State,
                             stale=publishedSources.Any(p=>p.RelativePath==s.RelativePath&&p.CacheKey!=s.SourceKey)})};break;
                 case "reindex":
                     await using(var indexProgress=new IngestionProgress(parsed.Has("json")?null:Console.Error,label:"index"))

@@ -127,7 +127,7 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
                 try
                 {
                     exploration=await new DocumentExplorer(workspace,(IExplorationAssistant)analyzer,progress).Run(sourceId,relative,key,Path.GetExtension(file).ToLowerInvariant(),units,headers,extraction.Warnings.ToArray(),imageSnapshot,reanalyze,explorationBudget!,
-                        (read,plan)=>Request(k,decisions,effectiveRole,read,Retrieval.Select(k,context.Description+" "+context.Notes+" "+plan+" "+string.Join(" ",read.Select(u=>u.Text)),context:context),"explore",context),Accept,ct);
+                        (read,plan,budget)=>Request(k,decisions,effectiveRole,read,Retrieval.Select(k,context.Description+" "+context.Notes+" "+plan+" "+string.Join(" ",read.Select(u=>u.Text)),context:context),"explore",context,budget),Accept,ct);
                     analysisComplete=exploration.Complete;
                     if(!analysisComplete)
                     {var warning=$"Analyse guidée partielle — {exploration.ExcludedUnits} unités exclues, {exploration.UnresolvedUnits} non résolues. Consulter analysis {sourceId}.";extraction.Warnings.Add(warning);warnings.Add(relative+": "+warning);}
@@ -243,7 +243,7 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
         progress?.Invoke($"Ingestion terminée : {files.Count} fichier(s), dont {unchanged} inchangé(s)");
         return report;
     }
-    public static AnalysisRequest Request(Knowledge k,List<Decision> decisions,SourceRole role,Unit[] units,Claim[] existing,string phase,SourceContext? context=null)
+    public static AnalysisRequest Request(Knowledge k,List<Decision> decisions,SourceRole role,Unit[] units,Claim[] existing,string phase,SourceContext? context=null,int budget=18000)
     {
         // Bound large assertions and decision explanations before constructing the prompt.
         existing=existing.Take(20).Select(c=>c with{Statement=c.Statement[..Math.Min(c.Statement.Length,1500)]}).ToArray();
@@ -251,7 +251,7 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
         var request=new AnalysisRequest(role.ToString(),units,existing,k.Entities.Where(e=>existing.Any(c=>c.EntityId==e.Id)).ToArray(),decisions.Where(d=>ids.Contains(d.ClaimId)).TakeLast(20).Select(d=>d with{Reason=d.Reason[..Math.Min(d.Reason.Length,1000)]}).ToArray(),phase,context,k.Projects.SingleOrDefault(p=>p.Name.Equals(context?.Project,StringComparison.OrdinalIgnoreCase)));
         request=request with{HumanDeclarations=k.Questions.Where(q=>q.Project==context?.Project&&q.Answer!=null).TakeLast(5).Select(q=>q with{Answer=q.Answer![..Math.Min(500,q.Answer!.Length)]}).ToArray()};
         if(request.Project is {} project)request=request with{Project=project with{Objective=project.Objective[..Math.Min(600,project.Objective.Length)],Architecture=project.Architecture[..Math.Min(600,project.Architecture.Length)],Conventions=project.Conventions.Take(5).Select(c=>c[..Math.Min(200,c.Length)]).ToArray(),Domains=project.Domains.Where(d=>d.Name==context?.Domain).Take(1).ToArray(),Glossary=project.Glossary.Where(g=>units.Any(u=>u.Text.Contains(g.Term,StringComparison.OrdinalIgnoreCase))).Take(3).ToArray(),Authorities=project.Authorities.Take(5).ToArray(),Systems=project.Systems.Take(5).ToArray()}};
-        while(Json.Serialize(request).Length>18000)
+        while(Json.Serialize(request).Length>budget)
         {
             if(request.Existing.Length==0)throw new InvalidDataException("Unit metadata exceeds the analysis budget.");
             var keep=request.Existing.SkipLast(1).ToArray(); var claimIds=keep.Select(c=>c.Id).ToHashSet();

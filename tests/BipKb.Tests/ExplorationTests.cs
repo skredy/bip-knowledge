@@ -10,6 +10,8 @@ public class ExplorationTests
     private sealed class Planner : IAnalyzer,IExplorationAssistant
     {
         public List<ExplorationRequest> Seen {get;}=[];
+        public string Profile {get;set;}=DocumentExplorer.LegacyProfile;
+        public Task<string> ReadingProfile(CancellationToken ct)=>Task.FromResult(Profile);
         public Func<ExplorationRequest,ExplorationReply>? Handler {get;set;}
         public Task<ExplorationReply> Explore(ExplorationRequest request,string? image,CancellationToken ct)
         {
@@ -30,6 +32,59 @@ public class ExplorationTests
             r.Visible.Select(v=>new UnitReview(v.Unit.Id,"analyzed","")).ToArray(),[],r.Format is ".png" or ".jpg" or ".jpeg"?"observed":"not-applicable");
     }
     private static Task<IngestionReport> Ingest(Sandbox s,Planner p,string path,int calls=12,bool force=false)=>new Ingestor(s.Workspace,p).Run(path,null,null,force,default,guided:true,maxCalls:calls);
+    [Fact]
+    public async Task WideReadExamines566UnitsInFewCallsWithNoLostEvidence()
+    {
+        using var s=new Sandbox();var units=Enumerable.Range(1,566).Select(n=>new Unit("proof-"+n,$"sheet: Endpoints; row:{n}","Commande "+n+" "+new string('x',480))).ToArray();
+        var p=new Planner{Profile=DocumentExplorer.WideProfile,Handler=r=>
+        {
+            var reply=Advance(r);var next=reply.Reads.FirstOrDefault()?.Start??0;
+            return reply with{Reads=next==0?[]:[new(next,Math.Min(200,r.TotalUnits-next+1))],Reviews=[],ReviewRanges=[new(r.Visible[0].Number,r.Visible.Length,"analyzed","")]};
+        }};
+        var accepted=new List<Finding>();
+        var summary=await new DocumentExplorer(s.Workspace,p).Run("test","endpoints.xlsx","key",".xlsx",units,new Dictionary<string,UnitHeader>(),[],null,false,new(10),
+            (read,plan,budget)=>Ingestor.Request(new Knowledge(),[],SourceRole.Current,read,[],"explore",budget:budget),a=>accepted.AddRange(a.Findings),default);
+        Assert.True(summary.Complete);Assert.InRange(p.Seen.Count,3,4);
+        Assert.NotEmpty(p.Seen[0].Visible);Assert.All(p.Seen,r=>Assert.InRange(Json.Serialize(r).Length,1,160_000));
+        Assert.Contains(p.Seen,r=>Json.Serialize(r).Length>30_000);
+        Assert.Equal(units.Select(u=>u.Id),accepted.SelectMany(f=>f.EvidenceIds));
+    }
+    [Fact]
+    public async Task OldPausedAnalysisKeepsItsProfileAndCacheAfterTransportUpgrade()
+    {
+        using var s=new Sandbox();var file=s.File("rules.md","Commande valide");var p=new Planner();
+        await Assert.ThrowsAsync<InvalidOperationException>(()=>Ingest(s,p,file,1));
+        // Emulate the on-disk status written before the Profile field existed.
+        var path=Assert.Single(Directory.GetFiles(Path.Combine(s.Workspace.Local,"exploration","status")));
+        var node=System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!.AsObject();node.Remove("profile");File.WriteAllText(path,node.ToJsonString());
+        p.Profile=DocumentExplorer.WideProfile;
+        await Ingest(s,p,file,1);Assert.Equal(2,p.Seen.Count);Assert.True(Assert.Single(s.Workspace.Load().Sources).Analyzed);
+        Assert.Equal(DocumentExplorer.LegacyProfile,Json.Read<ExplorationStatus>(File.ReadAllText(path)).Profile);
+        await Ingest(s,p,file,1,force:true);Assert.Equal(3,p.Seen.Count);Assert.NotEmpty(p.Seen[^1].Visible);
+        Assert.Equal(DocumentExplorer.WideProfile,Json.Read<ExplorationStatus>(File.ReadAllText(path)).Profile);
+    }
+    [Theory]
+    [InlineData("unseen")]
+    [InlineData("overlap")]
+    [InlineData("duplicate")]
+    [InlineData("hole")]
+    public async Task CompactCoverageCannotIncludeUnseenOrDuplicateUnits(string mode)
+    {
+        using var s=new Sandbox();var p=new Planner{Handler=r=>r.Step==1?Advance(r) with{Reads=[new(1,1),new(3,1)]}:Advance(r) with
+        {
+            Reviews=mode=="duplicate"?[new(r.Visible[0].Unit.Id,"analyzed","")]:[],
+            ReviewRanges=mode switch{"unseen"=>[new(4,1,"analyzed","")],"overlap"=>[new(1,1,"analyzed",""),new(1,1,"analyzed","")],"duplicate"=>[new(1,1,"analyzed","")],_=>[new(1,3,"analyzed","")]}
+        }};
+        var file=s.File("rules.md","# A\nCommande A\n# B\nCommande B\n# C\nCommande C\n# D\nCommande D");
+        await Assert.ThrowsAsync<InvalidDataException>(()=>Ingest(s,p,file));Assert.Empty(s.Workspace.Load().Claims);
+    }
+    [Fact]
+    public async Task CompactCoverageCannotClaimAnUnsupportedImageWasObserved()
+    {
+        using var s=new Sandbox();var file=Path.Combine(s.Source,"image.png");File.WriteAllBytes(file,Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="));
+        var p=new Planner{Handler=r=>Advance(r) with{Findings=[],Reviews=[],ReviewRanges=[new(1,1,"analyzed","")],VisualStatus="unsupported"}};
+        await Assert.ThrowsAsync<InvalidDataException>(()=>Ingest(s,p,file));Assert.Empty(s.Workspace.Load().Sources);
+    }
     [Theory]
     [InlineData("study.xls")]
     [InlineData("study.xlsx")]

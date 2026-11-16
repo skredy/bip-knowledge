@@ -74,6 +74,40 @@ public class CopilotLaunchTests
         Assert.Throws<FileNotFoundException>(()=>CopilotLaunch.Resolve(path,s.Root,true,[s.Root]));
     }
     [NodeFact]
+    public async Task StandardInputPreservesLargeUnicodePayloadWithoutCommandLineOrShellInterpretation()
+    {
+        using var s=new Sandbox();var script=Put(s.Root,"echo.js","const fs=require('fs'); process.stdout.write(fs.readFileSync(0,'utf8'));");
+        var payload=string.Concat(Enumerable.Repeat("é 漢字 👋 \"C:\\Documents\\classeur\"\r\n & echo NO $(echo NO) %PATH% `texte`\n",2200));
+        var start=new System.Diagnostics.ProcessStartInfo(NodeExecutable()!);start.ArgumentList.Add(script);
+        var args=CopilotAnalyzer.Arguments(payload,null,true,standardInput:true);
+        Assert.DoesNotContain("--prompt",args);Assert.DoesNotContain(payload,args);Assert.Contains("--deny-tool",args);Assert.Contains("--available-tools",args);
+        foreach(var arg in args)start.ArgumentList.Add(arg);
+        var result=await Processes.Run(start,TimeSpan.FromSeconds(10),default,payload);
+        Assert.Equal(0,result.ExitCode);Assert.Equal(payload,result.Output);
+    }
+    [NodeFact]
+    public async Task TimeoutAlsoInterruptsAChildThatDoesNotReadItsInput()
+    {
+        using var s=new Sandbox();var script=Put(s.Root,"blocked.js","setInterval(()=>{},10000);");
+        var start=new System.Diagnostics.ProcessStartInfo(NodeExecutable()!);start.ArgumentList.Add(script);
+        await Assert.ThrowsAsync<TimeoutException>(()=>Processes.Run(start,TimeSpan.FromMilliseconds(500),default,new string('x',1_000_000)));
+    }
+    [NodeFact]
+    public async Task CancellationInterruptsABlockedInputWithoutBecomingATimeout()
+    {
+        using var s=new Sandbox();var script=Put(s.Root,"cancel.js","setInterval(()=>{},10000);");
+        var start=new System.Diagnostics.ProcessStartInfo(NodeExecutable()!);start.ArgumentList.Add(script);
+        using var cancel=new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>Processes.Run(start,TimeSpan.FromSeconds(10),cancel.Token,new string('x',1_000_000)));
+    }
+    [NodeFact]
+    public async Task EarlyProcessRejectionIsReturnedEvenWhenInputWasNotRead()
+    {
+        using var s=new Sandbox();var script=Put(s.Root,"reject.js","process.stderr.write('rejected');process.exit(3);");
+        var start=new System.Diagnostics.ProcessStartInfo(NodeExecutable()!);start.ArgumentList.Add(script);
+        var result=await Processes.Run(start,TimeSpan.FromSeconds(10),default,new string('x',1_000_000));Assert.Equal(3,result.ExitCode);Assert.Equal("rejected",result.Error);
+    }
+    [NodeFact]
     public async Task NodeLaunchPreservesJsonQuotesNewlinesAndShellCharacters()
     {
         using var s=new Sandbox();var npm=Path.Combine(s.Root,"npm space & é");var script=Npm(npm);

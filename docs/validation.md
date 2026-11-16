@@ -257,3 +257,33 @@ La CLI réelle installée **1.0.111** a été inspectée (`--help`, `--version`,
 Aucun facteur d'accélération n'est annoncé : le modèle choisit les lectures et peut encore avoir besoin de nombreux échanges pour une analyse exhaustive. Le budget de 50 nouveaux échanges est réglable et n'inclut pas les tentatives internes bornées de l'adaptateur. La couverture n'atteste pas la vérité métier. Draw.io reste structurel (pas de rendu) et les images sont jointes entières (pas de recadrage/OCR local). L'exploration ne dispose ni de shell ni d'accès arbitraire au poste.
 
 Les deux parcours passent sur le **paquet 0.4.0 installé**, avec vérification que son assembly correspond à la compilation Release. Le parcours guidé démarre aussi le serveur local, charge la vue Ingestions en HTTP sur la boucle locale et vérifie la présence du plan publié et de sa couverture. Le MCP borne l'aperçu des plans (20 sources, 100 plages par source, huit questions) et expose les indicateurs de troncature/nombre total ; la CLI `analysis` conserve la vue détaillée.
+
+
+## Version 0.4.1 — demandes par stdin et lectures de sections élargies
+
+Validation Linux du 16 novembre 2026 : **195 tests réussis, cinq ignorés** (deux tests avec compte Copilot authentifié et trois spécifiques à Windows). Les tests Node de transport sont également exécutables sous Windows ; aucun résultat Windows réel n'est revendiqué ici.
+
+Les nouvelles régressions vérifient :
+
+- Transport UTF-8 d'une demande dépassant la limite Windows des arguments, avec accents, caractères non latins, retours à la ligne et caractères de shell préservés.
+- Délai et annulation pendant une écriture vers un processus qui ne lit pas stdin ; rejet anticipé du processus sans masquage de son code de sortie.
+- Ingestion d'un XLSX de 566 lignes à travers l'adaptateur et un processus Node simulant Copilot, interruption après un appel, reprise et conservation de toutes les preuves.
+- Couverture compacte refusée si elle cite une unité absente, une plage avec un trou, un doublon ou une image non observée.
+- Reprise d'un statut ancien sans champ `profile`, puis réanalyse forcée avec le nouveau profil.
+
+Le benchmark reproductible utilise un XLSX **synthétique de 111 009 octets**, 566 unités, et un Copilot simulé qui demande les sections suivantes :
+
+```bash
+python3 scripts/benchmark-guided.py --tool artifacts/verify-041/bip-kb --baseline-tool artifacts/verify-040/bip-kb
+```
+
+| Parcours | Appels | Unités transmises distinctes | Demande maximale, caractères |
+|---|---:|---:|---:|
+| 0.4.0 | 31 | 566 | 21 751 |
+| 0.4.1 | 3 | 566 | 130 911 |
+
+Les ensembles d'identifiants des preuves sont identiques. Ce résultat mesure le transport et le nombre d'appels pour ce scénario ; il ne mesure ni le temps du modèle, ni sa compréhension, ni son comportement sur le classeur privé de l'utilisateur.
+
+Le paquet installé passe le parcours terminal historique et le parcours guidé CLI/web sur XLS, XLSX, Draw.io, PNG et SQL. Le parcours guidé est aussi exécuté avec `scripts/test-guided.py --stdin`, y compris la transmission d'images et la lecture initiale des petits documents. L'assembly du paquet final installé est comparé à celui de la compilation Release.
+
+L'aide de Copilot CLI 1.0.111 annonce `piped stdin` ; son implémentation accepte stdin en mode non interactif et avec pièces jointes. Une sonde réelle avec stdin ne signale pas de demande vide, mais échoue avec code 1 et une erreur de réseau/authentification. **Aucune analyse métier réelle ni accélération chronométrée avec Copilot n'est déclarée validée.** Les échanges restent des processus séparés et les demandes plus grandes peuvent avoir une latence supérieure par appel.
