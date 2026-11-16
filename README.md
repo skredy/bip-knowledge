@@ -293,6 +293,8 @@ La conversation ne valide rien automatiquement. `remember` et les réponses conf
 
 ## Interface locale et MCP
 
+Voir le [guide MCP avec Copilot](docs/mcp.md) pour la configuration VS Code, les exemples de demandes, les consignes réutilisables et le dépannage.
+
 ```powershell
 bip-kb serve --port 5267
 ```
@@ -305,7 +307,7 @@ Configuration d'un serveur MCP stdio (l'enveloppe dépend du client) :
 {"command":"bip-kb","args":["mcp","--workspace","C:/Knowledge/bip"]}
 ```
 
-Outils en lecture seule : `search(query, project?)`, `context(query, project?)`, `entity(id)`, `evidence(id)`, `relations(id)`, `project(id)`, `task(id)`, `questions(id)` (nom du projet). Aucun outil MCP ne peut ingérer, arbitrer ou lancer une enquête. Protocole 2024-11-05, transport JSON-RPC ligne par ligne.
+Outils en lecture seule : `search(query, project?)`, `context(query, project?)`, `entity(id)`, `evidence(id)`, `relations(id)`, `project(id)`, `task(id)`, `questions(id)` (nom du projet), `analysis(id, project?)` (identifiant de source). Aucun outil MCP ne peut ingérer, arbitrer ou lancer une enquête. Protocole 2024-11-05, transport JSON-RPC ligne par ligne.
 
 ## Partager par Git
 
