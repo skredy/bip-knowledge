@@ -18,6 +18,11 @@ public sealed record ExplorationSummary(string Protocol,string RunId,string Plan
     [System.Text.Json.Serialization.JsonIgnore] public bool Complete=>AnalyzedUnits+EmptyUnits==TotalUnits;
 }
 public sealed record ExplorationStatus(string Source,string RelativePath,string SourceKey,string RunId,int Step,int RemainingUnits,string State,string Plan,string Profile="arguments-v1");
+// Only navigation errors may request a bounded correction; provenance errors never use this type.
+public sealed class CopilotNavigationException(string message,string correction):Exception("Exploration Copilot refusée : "+message)
+{
+    public string Correction {get;}=correction;
+}
 public interface IExplorationAssistant
 {
     Task<string> ReadingProfile(CancellationToken ct)=>Task.FromResult(DocumentExplorer.LegacyProfile);
@@ -69,12 +74,7 @@ public sealed class DocumentExplorer(Workspace workspace,IExplorationAssistant a
     public static void Validate(ExplorationReply reply,ExplorationRequest request)
     {
         [System.Diagnostics.CodeAnalysis.DoesNotReturn] static void Fail(string reason)=>throw new InvalidDataException("Exploration Copilot refusée : "+reason);
-        if(reply.Action is not ("read" or "search" or "catalog" or "exclude" or "finish"))Fail("action inconnue.");
-        if(string.IsNullOrWhiteSpace(reply.Plan)||reply.Plan.Length>1800||reply.Summary==null||reply.Summary.Length>2000||reply.Query==null||reply.Query.Length>200||reply.Offset<0)Fail("plan, synthèse ou recherche hors limites.");
-        if(reply.Reads==null||reply.Reads.Length>4||reply.Reads.Any(r=>r==null||r.Start<1||r.Count<1||r.Count>200||(long)r.Start+r.Count-1>request.TotalUnits)||reply.Reads.Sum(r=>(long)r.Count)>200)Fail("plages de lecture invalides (au plus 200 unités).");
-        if(reply.Action=="read"&&reply.Reads.Length==0||reply.Action!="read"&&reply.Reads.Length!=0)Fail("les plages sont réservées à l'action read.");
-        if(reply.Action=="search"&&string.IsNullOrWhiteSpace(reply.Query))Fail("recherche vide.");
-        if(reply.Action=="catalog"&&reply.Offset>=Math.Max(1,request.SectionCount))Fail("page de catalogue inexistante.");
+        if(string.IsNullOrWhiteSpace(reply.Plan)||reply.Plan.Length>1800||reply.Summary==null||reply.Summary.Length>2000||reply.Query==null||reply.Query.Length>200)Fail("plan, synthèse ou recherche hors limites.");
         var exclusions=reply.Exclusions??[];
         if(exclusions.Length>4||exclusions.Any(e=>e==null||e.Start<1||e.Count<1||(long)e.Start+e.Count-1>request.TotalUnits||string.IsNullOrWhiteSpace(e.Reason)||e.Reason.Length>440)||reply.Action=="exclude"&&exclusions.Length==0||reply.Action!="exclude"&&exclusions.Length>0)Fail("exclusion de plage invalide ou sans justification.");
         if(reply.Questions==null||reply.Questions.Length>8||reply.Questions.Any(q=>string.IsNullOrWhiteSpace(q)||q.Length>500))Fail("questions hors limites.");
@@ -95,6 +95,32 @@ public sealed class DocumentExplorer(Workspace workspace,IExplorationAssistant a
         }
         if(image&&reply.VisualStatus!="observed"&&(reply.Findings.Count>0||reply.Reviews.Any(r=>r.Status=="analyzed")||ranges.Any(r=>r.Status=="analyzed")))Fail("image non observée : aucune conclusion visuelle ni couverture complète autorisée.");
         if(reply.Action=="finish"&&string.IsNullOrWhiteSpace(reply.Summary))Fail("synthèse finale manquante.");
+        // Validate all evidence and coverage FIRST, including replies with invalid navigation.
+        ValidateNavigation(reply,request);
+    }
+    private static void ValidateNavigation(ExplorationReply reply,ExplorationRequest request)
+    {
+        [System.Diagnostics.CodeAnalysis.DoesNotReturn] void Fail(string reason)=>throw new CopilotNavigationException(reason,
+            $"Navigation was invalid: {reason} Use action read/search/catalog/exclude/finish. reads must be an array, empty except for action read, which requires 1 to 4 ranges. start is a 1-based UNIT NUMBER from 1 to {request.TotalUnits}, not an Excel row or an evidence ID; count is a positive number of units, NOT an end index. Large reads are safely bounded by bip-kb. offset must be nonnegative; catalog offsets are less than {Math.Max(1,request.SectionCount)}. search requires a nonempty query. Use visible/pending/catalog to choose valid numbers. Return a complete JSON response to the ORIGINAL request, with valid evidence and coverage; nothing from the rejected reply was accepted.");
+        if(reply.Action is not ("read" or "search" or "catalog" or "exclude" or "finish"))Fail("action inconnue.");
+        if(reply.Reads==null)Fail("reads : tableau requis.");
+        if(reply.Reads.Length>4)Fail($"reads : {reply.Reads.Length} plages demandées, maximum 4.");
+        if(reply.Action=="read"&&reply.Reads.Length==0||reply.Action!="read"&&reply.Reads.Length!=0)Fail("reads doit être non vide uniquement pour l'action read.");
+        for(var i=0;i<reply.Reads.Length;i++)
+        {
+            var range=reply.Reads[i];
+            if(range==null)Fail($"reads[{i}] : plage nulle.");
+            if(range.Start<1||range.Start>request.TotalUnits)Fail($"reads[{i}].start={range.Start} : numéro d'unité attendu entre 1 et {request.TotalUnits}.");
+            if(range.Count<1)Fail($"reads[{i}].count={range.Count} : nombre d'unités strictement positif requis.");
+        }
+        if(reply.Offset<0)Fail($"offset={reply.Offset} : valeur négative.");
+        if(reply.Action=="search"&&string.IsNullOrWhiteSpace(reply.Query))Fail("query : recherche vide.");
+        if(reply.Action=="catalog"&&reply.Offset>=Math.Max(1,request.SectionCount))Fail($"offset={reply.Offset} : page de catalogue inexistante ({request.SectionCount} sections).");
+    }
+    public static int[] ReadNumbers(UnitRange[] ranges,int totalUnits)
+    {
+        // Do not materialize an untrusted Count. ValidateNavigation rejects invalid starts/counts.
+        return ranges.SelectMany(r=>Enumerable.Range(r.Start,Math.Min(r.Count,totalUnits-r.Start+1))).Distinct().Take(200).ToArray();
     }
     public async Task<ExplorationSummary> Run(string source,string relative,string key,string format,Unit[] units,
         IReadOnlyDictionary<string,UnitHeader> headers,string[] limitations,string? image,bool force,ExplorationBudget budget,
@@ -190,9 +216,12 @@ public sealed class DocumentExplorer(Workspace workspace,IExplorationAssistant a
             switch(reply.Action)
             {
                 case "read":
-                    var numbers=reply.Reads.SelectMany(r=>Enumerable.Range(r.Start,r.Count)).Distinct().ToArray();
+                    var numbers=ReadNumbers(reply.Reads,units.Length);
                     visible=Read(numbers);
-                    feedback=$"{visible.Length}/{numbers.Length} unités demandées fournies intégralement. Les autres restent à lire ; utiliser les numéros visibles et pending pour poursuivre.";break;
+                    feedback=$"{visible.Length}/{numbers.Length} unités demandées fournies intégralement. Les autres restent à lire ; utiliser les numéros visibles et pending pour poursuivre.";
+                    if(reply.Reads.Sum(r=>(long)r.Count)>200||reply.Reads.Any(r=>(long)r.Start+r.Count-1>units.Length))
+                        feedback+=" Demande bornée à 200 unités distinctes et à la fin du document ; aucune unité non fournie n'est déclarée analysée.";
+                    break;
                 case "search":
                     var found=units.Select((u,i)=>(u,i)).Where(x=>x.u.Text.Contains(reply.Query,StringComparison.OrdinalIgnoreCase)||x.u.Locator.Contains(reply.Query,StringComparison.OrdinalIgnoreCase)).ToArray();
                     matchCount=found.Length;matches=found.Skip(reply.Offset).Take(12).Select(x=>new DocumentMatch(x.i+1,Short(x.u.Locator,160),Short(x.u.Text,160))).ToArray();

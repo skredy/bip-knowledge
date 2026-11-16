@@ -1,17 +1,18 @@
 namespace BipKb;
 
-/// <summary>One bounded format retry; provenance validation remains mandatory on every usable answer.</summary>
+/// <summary>One bounded format/navigation retry; provenance validation remains mandatory.</summary>
 public static class CopilotResponses
 {
     public static async Task<T> Run<T>(string prompt,string phase,string diagnosticDirectory,
         Func<string,CancellationToken,Task<string>> complete,Action<T> validate,CancellationToken ct,Action<string>? progress=null)
     {
         var rejected=new List<object>();
+        string? navigationCorrection=null;
         for(var attempt=0;attempt<2;attempt++)
         {
             ct.ThrowIfCancellationRequested();
             // Repeat the original request, not the rejected answer or its potentially malicious instructions.
-            var instruction=attempt==0?prompt:
+            var instruction=attempt==0?prompt:navigationCorrection!=null?"NAVIGATION RETRY: "+navigationCorrection+"\n"+prompt:
                 "FORMAT RETRY: Your previous response was rejected. Follow the requested JSON contract exactly. Return one complete JSON object, no Markdown, commentary, extra fields or truncated content. Use double-quoted property names and strings; escape control characters. Use only supplied evidence IDs. Prefer fewer fully supported findings over a long incomplete response.\n"+prompt;
             var response=await complete(instruction,ct);
             T result;
@@ -23,6 +24,16 @@ public static class CopilotResponses
                 throw Rejected(error,rejected,phase,prompt,diagnosticDirectory);
             }
             try{validate(result);}
+            catch(CopilotNavigationException error)
+            {
+                rejected.Add(new{attempt=attempt+1,reason=error.Message,response});
+                if(attempt==0)
+                {
+                    navigationCorrection=error.Correction;
+                    progress?.Invoke(error.Message+" Nouvelle tentative de navigation (2/2).");continue;
+                }
+                throw Rejected(new InvalidDataException(error.Message),rejected,phase,prompt,diagnosticDirectory);
+            }
             catch(InvalidDataException error)
             {
                 rejected.Add(new{attempt=attempt+1,reason=error.Message,response});

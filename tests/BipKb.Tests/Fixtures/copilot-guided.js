@@ -12,7 +12,7 @@ const request=JSON.parse(prompt.split('UNTRUSTED_DATA\n')[1]);
 if(request.protocol!=='guided-v1')process.exit(9);
 const image=['.png','.jpg','.jpeg'].includes(request.format);
 if(image&&request.visible.length&&(!args.includes('--attachment')||!fs.existsSync(args[args.indexOf('--attachment')+1])))process.exit(10);
-fs.appendFileSync(path.join(__dirname,'guided-calls.jsonl'),JSON.stringify({step:request.step,format:request.format,visible:request.visible.length,ids:request.visible.map(v=>v.unit.id),promptCharacters:prompt.length,stdin:stdinEnabled})+'\n');
+fs.appendFileSync(path.join(__dirname,'guided-calls.jsonl'),JSON.stringify({step:request.step,format:request.format,visible:request.visible.length,ids:request.visible.map(v=>v.unit.id),promptCharacters:prompt.length,stdin:stdinEnabled,navigationRetry:prompt.startsWith('NAVIGATION RETRY:')})+'\n');
 const seen=new Set(request.visible.map(v=>v.number));
 let next=0;
 for(const range of request.pending){for(let n=range.start;n<range.start+range.count;n++){if(!seen.has(n)){next=n;break;}}if(next)break;}
@@ -20,5 +20,7 @@ const reply={action:next?'read':'finish',plan:'Comprendre les sections avant de 
  findings:request.visible.map(v=>({entity:'Commande',kind:'rule',statement:v.unit.text,contribution:'new',evidenceIds:[v.unit.id],relatedClaimIds:[],uncertain:false,qualifiedName:null,conditions:[]})),
  reviews:request.visible.map(v=>({unitId:v.unit.id,status:'analyzed',reason:''})),questions:[],visualStatus:image?'observed':'not-applicable'};
 if(fs.existsSync(path.join(__dirname,'reject-next'))&&request.visible.length){fs.unlinkSync(path.join(__dirname,'reject-next'));reply.findings[0].evidenceIds=['unknown-proof'];}
+if(fs.existsSync(path.join(__dirname,'oversized-navigation-once'))&&next){fs.unlinkSync(path.join(__dirname,'oversized-navigation-once'));reply.reads=[{start:next,count:216}];}
+if(fs.existsSync(path.join(__dirname,'bad-navigation-once'))&&request.step===2){fs.unlinkSync(path.join(__dirname,'bad-navigation-once'));reply.action='read';reply.reads=[{start:0,count:10}];}
 console.log(JSON.stringify({type:'assistant.message',data:{content:JSON.stringify(reply)}}));
 console.log(JSON.stringify({type:'result',exitCode:0}));

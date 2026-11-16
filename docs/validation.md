@@ -303,3 +303,14 @@ Le journal Windows fourni par l'utilisateur montrait un échec de `StandardInput
 Le nouveau test `Utf8ProcessOutputAndErrorsOverrideLegacyWindowsCodePage` initialise le décodage avec CP850, lance un processus Node qui émet de l'UTF-8 sur les deux sorties et vérifie les textes ainsi que le code de sortie non nul. Il échoue avant le correctif et réussit après. Il ne modifie pas l'encodage global de la console et peut donc s'exécuter avec les autres tests en parallèle. Le test Unicode signalé par l'utilisateur est conservé et passe également localement.
 
 Validation Linux : **196 tests réussis, cinq ignorés**, compilation sans avertissement, exécution complète de `scripts/install.ps1` sous PowerShell 7.5.4 et mise à jour effective de l'outil 0.4.1 vers 0.4.2. Le workflow existant exécute le même script sur Windows et Linux ; aucun résultat du nouveau run Windows n'est encore revendiqué.
+
+
+## Version 0.4.3 — demandes de lecture bornées et correction de navigation
+
+Le diagnostic fourni par l'utilisateur demandait quatre plages : `(287, 131)`, `(419, 21)`, `(440, 16)` et `(456, 48)`, soit **216 unités** dans un document de 566 unités. Le validateur rejetait toute la réponse à cause de la limite de 200. Le test reprend ces coordonnées et les 141 unités de couverture associées, avec des textes synthétiques.
+
+Le nouveau comportement accepte cette navigation, conserve la couverture validée et sélectionne au maximum 200 unités distinctes pour la prochaine lecture (287 à 487, sans 418 dans ce cas), avant application du budget de texte. Les unités non fournies ne deviennent pas analysées. Les dépassements de fin de document sont bornés ; les départs inexistants et les comptes nuls/négatifs produisent une erreur précise, avec au plus une nouvelle tentative de navigation. Les tentatives de format et navigation partagent le même plafond de deux réponses.
+
+Les régressions couvrent les grands comptes (`int.MaxValue`), les plages qui se chevauchent, les coordonnées invalides, la seconde tentative réussie ou épuisée, l'annulation, l'absence de réinjection de la réponse rejetée et le refus sans nouvelle tentative des preuves/couvertures invalides même si la navigation l'est aussi. Le parcours XLSX de 566 unités à travers un processus Node simulé teste maintenant une lecture de 216 unités, une interruption/reprise puis une demande invalide corrigée, avec conservation de toutes les preuves.
+
+Validation Linux : **209 tests réussis, cinq ignorés**. Le script PowerShell complet compile sans avertissement, exécute les tests, produit le paquet 0.4.3 et met à jour une installation 0.4.2. La validation du comportement du modèle réel et le nouveau résultat Windows restent distincts de ces tests simulés.

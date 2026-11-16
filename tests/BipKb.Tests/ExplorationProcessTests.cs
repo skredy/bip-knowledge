@@ -6,7 +6,7 @@ namespace BipKb.Tests;
 public class ExplorationProcessTests
 {
     [NodeFact]
-    public async Task LargeWorkbookUsesStdinAcrossRealProcessesAndRetainsEveryRow()
+    public async Task LargeWorkbookResumesOversizedReadsAndRetriesNavigationAcrossRealProcesses()
     {
         using var s=new Sandbox();var file=Path.Combine(s.Source,"large.xlsx");
         using(var template=System.IO.Compression.ZipFile.OpenRead(Path.Combine(AppContext.BaseDirectory,"Fixtures","study.xlsx")))
@@ -35,10 +35,14 @@ public class ExplorationProcessTests
         }
         else{executable=script;File.SetUnixFileMode(script,UnixFileMode.UserRead|UnixFileMode.UserWrite|UnixFileMode.UserExecute);}
         File.WriteAllText(Path.Combine(package,"stdin-enabled"),"");Json.Write(Path.Combine(s.Workspace.Root,"bip.json"),s.Workspace.Config with{CopilotExecutable=executable});
+        File.WriteAllText(Path.Combine(package,"oversized-navigation-once"),"");File.WriteAllText(Path.Combine(package,"bad-navigation-once"),"");
         var engine=new Ingestor(s.Workspace,new CopilotAnalyzer(s.Workspace));
         await Assert.ThrowsAsync<InvalidOperationException>(()=>engine.Run(file,null,null,false,default,guided:true,maxCalls:1));Assert.Empty(s.Workspace.Load().Sources);
+        var staged=Json.Read<ExplorationReply>(File.ReadAllText(Assert.Single(Directory.GetFiles(Path.Combine(s.Workspace.Local,"exploration","responses")))));
+        Assert.Equal(216,Assert.Single(staged.Reads).Count);
         await engine.Run(file,null,null,false,default,guided:true,maxCalls:10);
-        var calls=File.ReadAllLines(Path.Combine(package,"guided-calls.jsonl"));Assert.InRange(calls.Length,3,5);
+        var calls=File.ReadAllLines(Path.Combine(package,"guided-calls.jsonl"));Assert.InRange(calls.Length,4,6);
+        Assert.Single(calls,line=>System.Text.Json.JsonDocument.Parse(line).RootElement.GetProperty("navigationRetry").GetBoolean());
         Assert.All(calls,line=>Assert.True(System.Text.Json.JsonDocument.Parse(line).RootElement.GetProperty("stdin").GetBoolean()));
         Assert.Contains(calls,line=>System.Text.Json.JsonDocument.Parse(line).RootElement.GetProperty("promptCharacters").GetInt32()>30_000);
         var k=s.Workspace.Load();var source=Assert.Single(k.Sources);Assert.True(source.Exploration!.Complete);Assert.Equal(566,source.EvidenceIds.Length);
