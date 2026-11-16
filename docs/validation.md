@@ -287,3 +287,10 @@ Les ensembles d'identifiants des preuves sont identiques. Ce résultat mesure le
 Le paquet installé passe le parcours terminal historique et le parcours guidé CLI/web sur XLS, XLSX, Draw.io, PNG et SQL. Le parcours guidé est aussi exécuté avec `scripts/test-guided.py --stdin`, y compris la transmission d'images et la lecture initiale des petits documents. L'assembly du paquet final installé est comparé à celui de la compilation Release.
 
 L'aide de Copilot CLI 1.0.111 annonce `piped stdin` ; son implémentation accepte stdin en mode non interactif et avec pièces jointes. Une sonde réelle avec stdin ne signale pas de demande vide, mais échoue avec code 1 et une erreur de réseau/authentification. **Aucune analyse métier réelle ni accélération chronométrée avec Copilot n'est déclarée validée.** Les échanges restent des processus séparés et les demandes plus grandes peuvent avoir une latence supérieure par appel.
+
+
+### Correctif du script d'installation de la 0.4.1
+
+Le script PowerShell conservait une version 0.4.0 codée en dur alors que le projet produisait la 0.4.1. Il lit maintenant `PackageVersion` via MSBuild, vérifie la présence du paquet attendu et distingue les étapes restauration, compilation, tests, packaging et installation. Le workflow Windows/Linux exécute ce même script.
+
+Validation locale avec PowerShell 7.5.4 sous Linux : installation neuve dans un chemin contenant des espaces, puis mise à jour d'une installation 0.4.0 vers 0.4.1. Les deux parcours complets réussissent (195 tests réussis, cinq ignorés) et l'outil neuf affiche `bip-kb 0.4.1`. Le verrou système NuGet a nécessité une exécution hors du sandbox de fichiers du cloud ; ce problème local n'est pas attribué au poste Windows de l'utilisateur. Le message « build fail » signalé sans journal détaillé n'a pas été reproduit et sa cause précise reste à identifier.

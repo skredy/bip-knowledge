@@ -14,6 +14,8 @@ Prérequis : SDK .NET 10 (incluant ASP.NET Core) et Git. Copilot CLI authentifi�
 bip-kb --version
 ```
 
+Le script lit la version dans le projet et installe le paquet correspondant. Il affiche séparément la restauration, la compilation, les tests, la création du paquet et l'installation. En cas d'échec, conserver la **première erreur détaillée** de l'étape concernée : le message final `Build failed` ou `Tests failed` ne donne pas la cause.
+
 Sous Linux :
 
 ```bash
