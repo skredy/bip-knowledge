@@ -2,7 +2,7 @@
 
 Assistant local de connaissance technique : ingestion de documents et de code, mémoire sourcée, recherche, enquêtes avec Copilot CLI et dossiers de travail persistants. .NET 10, SQLite FTS5, Razor Pages, partage par Git et MCP en lecture seule.
 
-**Version 0.3.10.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
+**Version 0.3.11.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
 
 ## Installer ou mettre à jour
 
@@ -20,7 +20,7 @@ Sous Linux :
 dotnet restore --locked-mode
 dotnet test --no-restore
 dotnet pack src/BipKb -c Release --no-restore -o artifacts
-dotnet tool install BipKb --version 0.3.10 --add-source ./artifacts --tool-path ./artifacts/tools
+dotnet tool install BipKb --version 0.3.11 --add-source ./artifacts --tool-path ./artifacts/tools
 ```
 
 ### Si vous avez une base 0.1 ou 0.2
@@ -86,6 +86,10 @@ bip-kb --ingest "C:/repos/bip/src/Commandes" --analyze
 Le choix s'applique à la commande, pas au format : Excel et Draw.io peuvent être indexés rapidement ou analysés entièrement. `ask` et les dossiers de recherche utilisent ensuite Copilot sur des résultats bornés, avec citations et recherches complémentaires ; ils ne lancent pas une analyse du dépôt entier et ne réingèrent pas automatiquement leurs réponses comme des faits. `search` et `context` restent locaux. Un profil de projet est nécessaire pour `ask` (`project setup` si nécessaire).
 
 `--analyze` complète l'analyse des fichiers qui n'ont été qu'indexés, tout en réutilisant les analyses à jour. **`--reanalyze` force l'analyse Copilot et contourne le cache : ne pas le conserver pour passer en mode rapide.** L'analyse exhaustive conserve son coût par lot ; la 0.3.9 ne promet pas de l'accélérer pour tout un dépôt.
+
+Depuis la **0.3.11**, les lots Excel partagent les en-têtes identiques une seule fois par feuille dans chaque demande. Les lignes vides contenant seulement une répétition d'en-têtes ne déclenchent plus d'analyse. Les cellules renseignées, leurs coordonnées, les preuves complètes et leurs identifiants sont conservés. Le nombre de lots est affiché avant les appels ; un classeur compressé de 100 Ko peut néanmoins contenir beaucoup de texte. `--analyze` reste une analyse exhaustive en plusieurs appels, pas une indexation locale.
+
+Un fichier isolé ne déclenche plus un second passage de « rapprochement entre fichiers ». Chaque lot compare toujours son contenu aux connaissances pertinentes déjà présentes. Pour reprendre une analyse Excel commencée avec une version antérieure, arrêter l'ancien processus, mettre à jour puis relancer **avec `--analyze`, sans `--reanalyze`** : les premiers lots validés sont récupérés si leurs demandes correspondent, puis les lignes restantes sont regroupées. Le contexte déjà renseigné est réutilisé. Les analyses déjà publiées ne sont pas relancées simplement par la mise à jour.
 
 Les connaissances et décisions déjà publiées sont conservées si leurs sources sont inchangées. Les lots d'une analyse interrompue sont récupérés quand leur demande correspond encore exactement. Une modification de source peut rendre les anciennes conclusions historiques, même en indexation locale. Le rapport distingue `mode: "index"` et `mode: "analysis"`, avec `unanalyzedFiles` ; ce compteur n'est pas une erreur du mode local. Les images indexées seules sont explicitement signalées comme non analysées visuellement : utiliser `--analyze` pour leur contenu.
 

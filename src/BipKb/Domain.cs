@@ -67,7 +67,9 @@ public sealed record Settings
     public int MaxFileBytes { get; init; } = 10 * 1024 * 1024;
 }
 public sealed record Unit(string Id, string Locator, string Text, string? Parent = null);
-public sealed record Extraction(List<Unit> Units, List<string> Warnings, bool Image = false, List<TechnicalObject>? Objects = null, List<KnowledgeRelation>? Relations = null);
+// Extraction-only metadata: canonical evidence and its IDs are not rewritten for prompt compaction.
+public sealed record UnitHeader(string Scope,string Prefix);
+public sealed record Extraction(List<Unit> Units, List<string> Warnings, bool Image = false, List<TechnicalObject>? Objects = null, List<KnowledgeRelation>? Relations = null, Dictionary<string,UnitHeader>? RepeatedHeaders = null);
 public sealed record Evidence(string Id, string SourceId, string RelativePath, string Version, string Locator, string Excerpt, string? Parent = null);
 public sealed record Entity(string Id, string Name, string Kind, string? Project = null, string? Domain = null, string[]? Aliases = null, string? IdentityKey = null);
 public sealed record Finding

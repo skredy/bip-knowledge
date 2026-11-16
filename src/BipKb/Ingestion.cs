@@ -45,6 +45,7 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
         }
         var warnings=new List<string>(); var changed=new List<string>(); var unchanged=0; var counts=Enum.GetValues<Contribution>().ToDictionary(c=>c,c=>0);
         var seen=new HashSet<string>(); var groups=new Dictionary<SourceDescriptor,List<Unit>>();
+        var groupFiles=new Dictionary<SourceDescriptor,HashSet<string>>();var headers=new Dictionary<string,UnitHeader>();
         var evidenceIds=k.Evidence.Select(e=>e.Id).ToHashSet();
         var objectPositions=k.Objects.Select((o,i)=>(o.Id,i)).ToDictionary(p=>p.Id,p=>p.i);
         var relationPositions=k.Relations.Select((r,i)=>(r.Id,i)).ToDictionary(p=>p.Id,p=>p.i);
@@ -80,6 +81,8 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
             var evidence=extraction.Units.Select(u=>new Evidence(Json.Hash(versionId+u.Id),sourceId,relative,hash,u.Locator,u.Text,u.Parent)).ToArray();
             foreach(var e in evidence)if(evidenceIds.Add(e.Id))k.Evidence.Add(e);
             var units=evidence.Select(e=>new Unit(e.Id,$"{sourceId}/{relative} {e.Locator}",e.Excerpt)).ToArray();
+            if(extraction.RepeatedHeaders!=null)
+                foreach(var (id,header) in extraction.RepeatedHeaders)headers[Json.Hash(versionId+id)]=header with{Scope=sourceId+"/"+relative+" "+header.Scope};
             var technical=TechnicalExtraction.Read(bytes,Path.GetExtension(file).ToLowerInvariant(),sourceId,context,evidence);
             foreach(var item in technical.Objects)
                 if(objectPositions.TryGetValue(item.Id,out var index))k.Objects[index]=item with{EvidenceIds=k.Objects[index].EvidenceIds.Concat(item.EvidenceIds).Distinct().ToArray()};
@@ -89,6 +92,14 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
                 else {relationPositions[edge.Id]=k.Relations.Count;k.Relations.Add(edge);}
             var duplicate=k.Sources.FirstOrDefault(s=>s.Active&&s.Hash==hash&&s.Role==effectiveRole&&s.Context==context&&s.Id!=previous?.Id&&(!analyze||s.Analyzed));
             var fileClaims=new HashSet<string>();
+            void Accept(Analysis analysis)
+            {
+                foreach(var f in analysis.Findings)
+                {
+                    var claim=Apply(k,f,effectiveRole,counts,context);
+                    if(claim!=null){fileClaims.Add(claim.Id);changed.Add(claim.Id);}
+                }
+            }
             var analysisComplete=analyze;
             if(duplicate!=null&&!reanalyze)
             {
@@ -106,8 +117,23 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
             }
             else if(analyze||hasStaging)
             {
-                var batches=Batches(units,9000).ToArray();var batchNumber=0;
-                analysisComplete=analyze||batches.Length>0;
+                // Reuse the completed prefix of pre-0.3.11 Excel batches before planning the remainder.
+                // Keep the original requests and evidence IDs so an interrupted analysis is not discarded.
+                var recovered=0;
+                if(extraction.RepeatedHeaders is {Count:>0}&&hasStaging&&!reanalyze)
+                    foreach(var legacyBatch in AnalysisBatches.Create(units))
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        var existing=Retrieval.Select(k,context.Description+" "+context.Notes+" "+string.Join(" ",legacyBatch.Select(u=>u.Locator+" "+u.Text)),context:context);
+                        var saved=ReadCached(Request(k,decisions,effectiveRole,legacyBatch,existing,"extract",context),key);
+                        if(saved==null)break;
+                        Accept(saved);recovered+=legacyBatch.Length;
+                        progress?.Invoke(fileLabel+$" — anciens lots validés récupérés : {recovered}/{units.Length} unités");
+                    }
+                var batches=AnalysisBatches.Create(units.Skip(recovered),headers).ToArray();var batchNumber=0;
+                var omitted=units.Length-recovered-batches.Sum(b=>b.Length);
+                progress?.Invoke(fileLabel+$" — {units.Length} unités extraites, {batches.Length} lot(s) à analyser ou réutiliser"+(omitted>0?$", {omitted} ligne(s) sans données écartée(s) de l'analyse":""));
+                analysisComplete=analyze||batches.Length>0||recovered>0;
                 foreach(var batch in batches)
                 {
                     var label=$"{fileLabel} — lot {++batchNumber}/{batches.Length}";
@@ -129,11 +155,7 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
                         finally { File.Delete(imageSnapshot); }
                     }
                     else analysis=await AnalyzeCached(request,null,key,reanalyze,ct,label);
-                    foreach(var f in analysis.Findings)
-                    {
-                        var claim=Apply(k,f,effectiveRole,counts,context);
-                        if(claim!=null){fileClaims.Add(claim.Id);changed.Add(claim.Id);}
-                    }
+                    Accept(analysis);
                 }
             }
             if(extraction.Image&&!analysisComplete)
@@ -149,6 +171,7 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
             {
                 if(!groups.TryGetValue(groupKey,out var groupUnits)){groupUnits=[];groups.Add(groupKey,groupUnits);}
                 groupUnits.AddRange(units);
+                if(!groupFiles.TryGetValue(groupKey,out var paths)){paths=[];groupFiles.Add(groupKey,paths);}paths.Add(relative);
             }
             progress?.Invoke(fileLabel+(analyze?" — traité":" — indexé localement"));
         }
@@ -168,7 +191,7 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
             }
         RefreshObsolete(k);
         // Reconcile bounded groups; each group also retrieves the closest existing relationships.
-        var reconciliation=groups.Where(g=>g.Value.Count>1).SelectMany(g=>Batches(g.Value.ToArray(),9000).Select(batch=>(Group:g,Batch:batch))).ToArray();
+        var reconciliation=groups.Where(g=>groupFiles[g.Key].Count>1).SelectMany(g=>AnalysisBatches.Create(g.Value,headers).Select(batch=>(Group:g,Batch:batch))).ToArray();
         var reconciliationNumber=0;
         foreach(var (group,batch) in reconciliation)
             {
@@ -231,12 +254,6 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
         var path=Path.Combine(workspace.Local,"staging",Json.Hash(salt+Json.Serialize(request))+".json");
         if(!File.Exists(path))return null;
         var saved=Json.Read<Analysis>(File.ReadAllText(path));CopilotAnalyzer.Validate(saved,request);return saved;
-    }
-    private static IEnumerable<Unit[]> Batches(Unit[] units,int max)
-    {
-        var batch=new List<Unit>(); var size=0;
-        foreach(var unit in units) { if(size+Json.Serialize(unit).Length>max&&batch.Count>0){yield return batch.ToArray();batch.Clear();size=0;} batch.Add(unit);size+=Json.Serialize(unit).Length; }
-        if(batch.Count>0)yield return batch.ToArray();
     }
     private static Claim? Apply(Knowledge k,Finding finding,SourceRole role,Dictionary<Contribution,int> counts,SourceContext context)
     {

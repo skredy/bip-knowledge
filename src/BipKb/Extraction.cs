@@ -85,7 +85,7 @@ public static class Extractor
     public static Extraction Read(string file,int maxBytes,string[]? excelSheets=null)
     {
         if(new FileInfo(file).Length>maxBytes) throw new InvalidDataException("File exceeds configured maxFileBytes: "+Path.GetFileName(file));
-        var units=new List<Unit>(); var warnings=new List<string>();
+        var units=new List<Unit>(); var warnings=new List<string>();var repeatedHeaders=new Dictionary<string,UnitHeader>();
         void Add(string locator,string content)
         {
             if(string.IsNullOrWhiteSpace(content)) return;
@@ -113,7 +113,11 @@ public static class Extractor
                     for(var col=0;col<reader.FieldCount;col++)
                         if(reader.GetValue(col) is {} value) cells.Add($"{Column(col)}{row}: {Convert.ToString(value,System.Globalization.CultureInfo.InvariantCulture)}");
                     if(row==1)headers=string.Join(" | ",cells);
-                    Add($"sheet:{reader.Name}; row:{row}",(row>1?"Headers: "+headers+"\n":"")+string.Join("\n",cells));
+                    var prefix=row>1?"Headers: "+headers+"\n":"";var first=units.Count;
+                    Add($"sheet:{reader.Name}; row:{row}",prefix+string.Join("\n",cells));
+                    // Only exact, complete prefixes may be factored out. Split/long headers remain intact.
+                    if(prefix.Length is >0 and <2000&&first<units.Count&&units[first].Text.StartsWith(prefix,StringComparison.Ordinal))
+                        repeatedHeaders[units[first].Id]=new("sheet:"+reader.Name,prefix);
                 }
             }while(reader.NextResult());
         }
@@ -189,7 +193,7 @@ public static class Extractor
                     Add($"line:{start}; {heading}",chunk.ToString()); break;
             }
         }
-        return new(units,warnings);
+        return new(units,warnings,RepeatedHeaders:repeatedHeaders);
     }
     private static string Column(int n) { var s=""; for(n++;n>0;n=(n-1)/26)s=(char)('A'+(n-1)%26)+s; return s; }
     private static XDocument Xml(string text) { using var reader=XmlReader.Create(new StringReader(text),new XmlReaderSettings{DtdProcessing=DtdProcessing.Prohibit,XmlResolver=null,MaxCharactersInDocument=20_000_000}); return XDocument.Load(reader); }

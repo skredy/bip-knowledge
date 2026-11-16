@@ -220,3 +220,24 @@ Comparaison reproductible sous Linux, Release, avec `python3 scripts/benchmark-i
 | Recherche après reconstruction, processus compris | 0,288 s |
 
 Ce benchmark reproduit une forte répétition de références avec des identifiants de 64 caractères et une mémoire de plusieurs centaines de Mo. Il ne reproduit ni le contenu métier, ni le matériel, ni le comportement de synchronisation du poste utilisateur. L'annulation est contrôlée dans les boucles et transmise à SQLite ; la lecture/désérialisation synchrone d'un JSON en cours se termine avant le contrôle suivant. Le WAL peut croître pendant une transaction ; sa taille seule ne mesure pas l'avancement.
+
+## Version 0.3.11 — analyse des classeurs Excel
+
+La capture utilisateur montre un seul `endpoints.xlsx` avec `--analyze`, 49 lots, et des attentes de plusieurs dizaines de secondes par appel. Le fichier professionnel n'a pas été fourni : sa taille compressée ne permet pas de connaître le texte extrait. Deux surcoûts du code ont été reproduits : les en-têtes répétés dans chaque ligne occupaient le budget de chaque demande ; un fichier isolé recevait aussi un second passage complet de rapprochement. Les lignes Excel vides auxquelles l'extracteur ajoute les en-têtes sont désormais exclues de l'analyse, sans réécrire les preuves.
+
+**160 tests réussis, 4 ignorés sous Linux** (Copilot authentifié et trois tests Windows). Les nouveaux scénarios couvrent coordonnées et données complètes, en-têtes multilignes/longs contenant des instructions, limites de découpage, cellules fortement échappées en JSON, isolation des feuilles, lignes vides, absence de second passage sur un fichier unique, maintien du rapprochement multi-fichiers, incrémentalité, interruption/reprise du nouveau découpage et récupération des anciens lots validés. L'indexation locale récupère les lots disponibles sans nouvel appel. Les fixtures `.xls` et `.xlsx` existantes restent couvertes.
+
+Mesure reproductible avec `python3 scripts/benchmark-excel.py --dotnet /workspace/.dotnet/dotnet --baseline-tool artifacts/verify-0310-final/bip-kb`. Le script génère un `.xlsx` synthétique, utilise un processus Copilot simulé et vérifie que les mêmes identifiants des 600 lignes renseignées et de l'en-tête sont envoyés une fois pendant l'extraction :
+
+| Mesure | 0.3.10 | 0.3.11 |
+|---|---:|---:|
+| Taille du classeur | 110 858 octets | 110 858 octets |
+| Lots d'extraction | 146 | 38 |
+| Lots de rapprochement | 146 | 0 |
+| Total d'appels | 292 | 38 |
+| Lignes avec en-tête couvertes | 601 | 601 |
+| Taille maximale du prompt | 11 537 caractères | 12 077 caractères |
+
+Cette mesure porte sur le nombre d'appels et la préservation des données, pas sur la durée d'une analyse réelle ni sur sa qualité métier. Aucun parallélisme ou permission Copilot supplémentaire n'a été introduit. Le gain sur le classeur utilisateur dépend de son contenu et de ses en-têtes ; il n'est pas établi par ce benchmark.
+
+Le paquet final **0.3.11 installé**, dont l'assembly correspond à la compilation Release, passe le parcours terminal complet SQL/XLS/C#, reprise sans nouvelle saisie, erreur de format, incrémentalité, recherche/contexte, reconstruction et export/import. Ce parcours utilise Copilot simulé sous Linux ; aucune validation authentifiée Windows n'est revendiquée pour cette version.
