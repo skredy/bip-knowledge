@@ -27,6 +27,8 @@ public static class Processes
         catch(OperationCanceledException)
         {
             try{process.Kill(true);}catch(InvalidOperationException){}
+            using(var reap=new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                try{await process.WaitForExitAsync(reap.Token);}catch(OperationCanceledException){ }
             try{await Task.WhenAll(output,error);}catch(OperationCanceledException){}
             if(ct.IsCancellationRequested) throw;
             throw new TimeoutException("Copilot CLI timed out; staged work is retained.");
@@ -45,7 +47,7 @@ public sealed class CopilotAnalyzer(Workspace workspace) : IAnalyzer, IResearchA
         var version=await Probe("--version",ct);
         object? completion=null;
         if(live) completion=await Ask("Réponds simplement que la connexion fonctionne ; aucune connaissance fournie.",[],ct);
-        return new { executable=workspace.Config.CopilotExecutable,resolvedExecutable=Launch.Executable,launcher=Launch.Kind,prefixArguments=Launch.PrefixArguments,version=version.Output.Trim(),nonInteractive=true,attachments=help!.Contains("--attachment"),authentication=live?"live request succeeded":"not tested",completion };
+        return new { executable=workspace.Config.CopilotExecutable,resolvedExecutable=Launch.Executable,launcher=Launch.Kind,prefixArguments=Launch.PrefixArguments,temporaryRoot=Path.GetTempPath(),version=version.Output.Trim(),nonInteractive=true,attachments=help!.Contains("--attachment"),authentication=live?"live request succeeded":"not tested",completion };
     }
     private Task<ProcessResult> Probe(string argument,CancellationToken ct)
     {
@@ -77,27 +79,23 @@ public sealed class CopilotAnalyzer(Workspace workspace) : IAnalyzer, IResearchA
     {
         await Ensure(ct);
         if(image!=null&&!help!.Contains("--attachment"))throw new NotSupportedException("Installed Copilot CLI does not support image attachments.");
-        var directory=Path.Combine(workspace.Local,"copilot",Guid.NewGuid().ToString("N")); Directory.CreateDirectory(directory);
+        await using var scratch=CopilotScratch.Create();var directory=scratch.DirectoryPath;
         string? attachment=null;
         if(image!=null) { attachment=Path.Combine(directory,"attachment"+Path.GetExtension(image)); File.Copy(image,attachment); }
-        try
+        for(var attempt=0;;attempt++)
         {
-            for(var attempt=0;;attempt++)
-            {
-                var start=Launch.Start(directory);
-                foreach(var a in Arguments(prompt,attachment))start.ArgumentList.Add(a);
-                start.Environment["COPILOT_ALLOW_ALL"]="false"; start.Environment["COPILOT_ASSISTED_APPROVAL"]="false";
-                start.Environment["COPILOT_AUTO_UPDATE"]="false"; start.Environment["COPILOT_PLUGIN_DIR_ONLY"]="true";
-                start.Environment["COPILOT_DISABLE_LOGIN_SHELL_ENV"]="true";
-                start.Environment.Remove("COPILOT_CUSTOM_INSTRUCTIONS_DIRS"); start.Environment.Remove("COPILOT_SKILLS_DIRS");
-                var result=await Run(start,TimeSpan.FromSeconds(workspace.Config.TimeoutSeconds),ct);
-                if(result.ExitCode==0) return Unfence(result.Output);
-                if(attempt<2&&Regex.IsMatch(result.Error,@"\b(429|502|503|504)\b")) { await Task.Delay(TimeSpan.FromSeconds(2*(attempt+1)),ct); continue; }
-                // Never echo provider output: it may contain source text or credentials.
-                throw new InvalidOperationException($"Copilot CLI failed (exit {result.ExitCode}). Check authentication, model access and network with copilot and doctor --live; no revision published.");
-            }
+            var start=Launch.Start(directory);
+            foreach(var a in Arguments(prompt,attachment))start.ArgumentList.Add(a);
+            start.Environment["COPILOT_ALLOW_ALL"]="false"; start.Environment["COPILOT_ASSISTED_APPROVAL"]="false";
+            start.Environment["COPILOT_AUTO_UPDATE"]="false"; start.Environment["COPILOT_PLUGIN_DIR_ONLY"]="true";
+            start.Environment["COPILOT_DISABLE_LOGIN_SHELL_ENV"]="true";
+            start.Environment.Remove("COPILOT_CUSTOM_INSTRUCTIONS_DIRS"); start.Environment.Remove("COPILOT_SKILLS_DIRS");
+            var result=await Run(start,TimeSpan.FromSeconds(workspace.Config.TimeoutSeconds),ct);
+            if(result.ExitCode==0) return Unfence(result.Output);
+            if(attempt<2&&Regex.IsMatch(result.Error,@"\b(429|502|503|504)\b")) { await Task.Delay(TimeSpan.FromSeconds(2*(attempt+1)),ct); continue; }
+            // Never echo provider output: it may contain source text or credentials.
+            throw new InvalidOperationException($"Copilot CLI failed (exit {result.ExitCode}). Check authentication, model access and network with copilot and doctor --live; no revision published.");
         }
-        finally { Directory.Delete(directory,true); }
     }
     public static string Unfence(string s)
     {

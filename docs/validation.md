@@ -129,3 +129,14 @@ La résolution prend en charge `copilot.exe` et les shims npm `.cmd`/`.ps1` asso
 Les tests de résolution couvrent le lanceur VS Code seul, un exécutable situé après celui-ci dans PATH, npm, les chemins avec espaces/accents, les installations incomplètes et un point d'entrée sortant du package. Un test avec un véritable processus Node vérifie que JSON, guillemets, retours à la ligne et caractères de shell arrivent inchangés. Ce test est ignoré si Node n'est pas installé : Node reste facultatif pour une installation native de Copilot.
 
 Le paquet 0.3.4 installé passe également tout le scénario `scripts/test-terminal.py`. `doctor` inspecte l'installation Linux réelle de Copilot CLI 1.0.111 et indique correctement son chemin. Les scénarios de résolution Windows sont exercés sur des arborescences de test et intégrés à la CI Windows ; cette session ne constitue pas une validation authentifiée sur le poste professionnel. Le blocage réseau de l'analyse réelle reste celui documenté plus haut.
+
+
+## Correctif 0.3.5 — répertoire temporaire et nettoyage sous Windows
+
+**97 tests réussis, 2 tests ignorés sur Linux** : Copilot authentifié et un test propre aux verrous Windows. L'analyse utilisait `.local/copilot/<id>` dans le workspace, puis appelait `Directory.Delete` sans protection dans un `finally`. Un échec de cette suppression pouvait remplacer une réponse valide, une erreur fournisseur ou une annulation. La capture de refus d'accès ne permet pas à elle seule de distinguer création et suppression ; ce défaut de masquage a été reproduit par injection de refus d'accès.
+
+Les appels Copilot utilisent désormais un dossier privé créé dans le répertoire temporaire système. `doctor` expose `temporaryRoot`. Le nettoyage traite les attributs de lecture seule uniquement dans ce dossier, ne suit pas les liens et réessaie trois fois les erreurs d'accès/E/S. Un échec persistant est signalé avec le chemin restant, sans modifier le résultat de l'analyse. Aucun droit du workspace ni paramètre OneDrive n'est modifié. Les pièces jointes éventuellement conservées sont signalées dans l'avertissement.
+
+Les tests couvrent succès et erreur fournisseur préservés malgré un refus de nettoyage, annulation, verrou transitoire, fichiers/dossiers en lecture seule, pièce jointe absente et non-traversée des liens. Un test spécifique Windows garde un fichier ouvert sans autoriser sa suppression ; il est inclus dans la CI Windows et ignoré dans cette session Linux. Après timeout, le processus est attendu pendant un délai borné avant de nettoyer.
+
+Le paquet 0.3.5 installé passe le parcours terminal complet avec l'ancien emplacement `.local/copilot` remplacé par un fichier, donc inutilisable comme dossier. Cela vérifie que l'analyse n'en dépend plus. Les nouvelles erreurs éventuelles de `doctor --live` doivent être traitées selon leur nature ; la résolution du nettoyage ne démontre ni une authentification valide ni l'accès au modèle sur le poste utilisateur.

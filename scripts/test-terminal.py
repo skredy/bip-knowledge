@@ -123,6 +123,9 @@ print(json.dumps({'findings':[] if data['phase']=='reconcile' else [{'entity':'F
         config = json.loads(config_path.read_text(encoding="utf-8"))
         config["copilotExecutable"] = str(fixture)
         config_path.write_text(json.dumps(config), encoding="utf-8")
+        # The old location may be unusable (for example under a synced workspace).
+        # The analysis must use its separate system temporary directory instead.
+        (kb / ".local" / "copilot").write_text("legacy runtime location is blocked", encoding="utf-8")
 
         with terminal("project", "setup") as session:
             session.answer("Nom du projet", "Migration BIP")

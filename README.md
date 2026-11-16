@@ -2,7 +2,7 @@
 
 Assistant local de connaissance technique : ingestion de documents et de code, mémoire sourcée, recherche, enquêtes avec Copilot CLI et dossiers de travail persistants. .NET 10, SQLite FTS5, Razor Pages, partage par Git et MCP en lecture seule.
 
-**Version 0.3.4.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
+**Version 0.3.5.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
 
 ## Installer ou mettre à jour
 
@@ -20,7 +20,7 @@ Sous Linux :
 dotnet restore --locked-mode
 dotnet test --no-restore
 dotnet pack src/BipKb -c Release --no-restore -o artifacts
-dotnet tool install BipKb --version 0.3.4 --add-source ./artifacts --tool-path ./artifacts/tools
+dotnet tool install BipKb --version 0.3.5 --add-source ./artifacts --tool-path ./artifacts/tools
 ```
 
 ### Si vous avez une base 0.1 ou 0.2
@@ -87,6 +87,12 @@ Rouvrir le terminal après installation, puis lancer `copilot --version`, `bip-k
 `doctor` indique désormais le chemin réellement lancé et le mode (`native`, `npm-node`, etc.). Si l'exécutable est installé hors du `PATH`, renseigner `copilotExecutable` dans `bip.json` avec son chemin exact. Un chemin relatif est résolu depuis le workspace. Les chemins locaux d'installation n'ont pas à être identiques sur les autres postes : conserver `copilot` quand la détection automatique suffit.
 
 bip-kb ne lance pas les scripts d'installation VS Code, ne contourne pas les politiques PowerShell et n'exécute pas les documents via un shell. Pour npm, il lit le point d'entrée déclaré du package installé et le transmet directement à Node.js. Le contexte déjà enregistré est conservé : relancer ensuite la même ingestion sans `--describe`.
+
+### Refus d'accès à `.local/copilot` sous Windows
+
+Les versions antérieures à 0.3.5 créaient le dossier de travail Copilot dans le workspace. Un refus d'accès pendant son nettoyage pouvait masquer la réponse ou l'erreur d'analyse. À partir de la 0.3.5, les appels utilisent un dossier privé `bip-kb-copilot-*` dans le répertoire temporaire système (`%TEMP%` sous Windows), habituellement hors de OneDrive. `doctor` affiche `temporaryRoot` ; `doctor --live` vérifie aussi un appel réel.
+
+Le nettoyage réessaie brièvement les fichiers verrouillés et traite les fichiers en lecture seule sans modifier les droits du workspace. S'il reste impossible, un avertissement indique le dossier restant, qui peut contenir des pièces jointes ; il ne remplace plus le résultat de Copilot. Les contextes et analyses intermédiaires restent dans le workspace. Après mise à jour, relancer la même commande sans `--describe` ni `--reanalyze` pour reprendre le travail disponible.
 
 ## Ingérer sans préciser le format
 
