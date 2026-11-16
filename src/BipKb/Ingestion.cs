@@ -189,13 +189,15 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
         var report=new IngestionReport(Guid.NewGuid().ToString("N"),DateTimeOffset.UtcNow,sourceId,files.Count,unchanged,counts,warnings.ToArray(),changed.Distinct().Order().ToArray(),analyze?"analysis":"index",unanalyzed);
         k.Reports.Add(report); ct.ThrowIfCancellationRequested();
         progress?.Invoke("Enregistrement des connaissances et du rapport");
+        string publishedRevision;
         using(var publication=workspace.Lock())
         {
             if(workspace.SemanticRevision!=baseline||Json.Hash(Json.Serialize(workspace.Config))!=configuration)throw new RevisionConflictException("Knowledge or context changed during analysis. Retry ingestion; unchanged staged units will be reused.");
             workspace.Save(k);
+            publishedRevision=workspace.SemanticRevision;
         }
         // The index is disposable. A process interruption here is repaired by search/import.
-        if(!analyze){progress?.Invoke("Construction de l'index de recherche local");new SearchEngine(workspace).Refresh();}
+        if(!analyze){progress?.Invoke("Construction de l'index de recherche local");new SearchEngine(workspace).Refresh(supplied:k,progress:progress,ct:ct,suppliedRevision:publishedRevision);}
         progress?.Invoke($"Ingestion terminée : {files.Count} fichier(s), dont {unchanged} inchangé(s)");
         return report;
     }

@@ -96,6 +96,7 @@ def main():
             result = subprocess.run(command + list(map(str, words)) + options + ["--workspace", str(workspace), "--json"], capture_output=True, text=True, timeout=40)
             assert result.returncode == expected, result.stdout + result.stderr
             assert '[ingestion ' not in result.stderr, result.stderr
+            assert '[index ' not in result.stderr, result.stderr
             return json.loads(result.stdout if expected == 0 else result.stderr)
 
         def terminal(*words):
@@ -235,6 +236,16 @@ print(json.dumps({'type':'result','exitCode':0}))
         assert indexed["mode"] == "index" and indexed["unanalyzedFiles"] == 1
         assert (root / "calls").read_text() == before_calls
         assert cli("search", "reliquat")["hits"]
+        # Reindex uses only published memory, even when the original file and Copilot are unavailable.
+        memory_before = {str(p.relative_to(kb)): p.read_bytes() for p in (kb / "memory").rglob("*.json")}
+        original = local_file.read_text(encoding="utf-8")
+        local_file.unlink()
+        rebuilt = cli("reindex")
+        assert rebuilt["status"] == "indexed" and Path(rebuilt["index"]).name == "search-v6.db"
+        assert (root / "calls").read_text() == before_calls
+        assert {str(p.relative_to(kb)): p.read_bytes() for p in (kb / "memory").rglob("*.json")} == memory_before
+        assert cli("search", "reliquat")["hits"]
+        local_file.write_text(original, encoding="utf-8")
         config["copilotExecutable"] = str(fixture)
         config_path.write_text(json.dumps(config), encoding="utf-8")
         analyzed = cli("--ingest", local_file)

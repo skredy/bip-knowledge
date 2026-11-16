@@ -7,6 +7,7 @@ namespace BipKb;
 public sealed class IngestionProgress : IAsyncDisposable
 {
     private readonly TextWriter? output;
+    private readonly string label;
     private readonly CancellationTokenSource stop=new();
     private readonly object gate=new();
     private readonly Stopwatch elapsed=Stopwatch.StartNew();
@@ -16,9 +17,10 @@ public sealed class IngestionProgress : IAsyncDisposable
     private bool disposed;
     private bool outputUnavailable;
 
-    public IngestionProgress(TextWriter? output,TimeSpan? interval=null)
+    public IngestionProgress(TextWriter? output,TimeSpan? interval=null,string label="ingestion")
     {
         this.output=output;
+        this.label=label;
         heartbeat=output==null?Task.CompletedTask:Task.Run(async ()=>
         {
             using var timer=new PeriodicTimer(interval??TimeSpan.FromSeconds(10));
@@ -46,7 +48,7 @@ public sealed class IngestionProgress : IAsyncDisposable
     {
         try
         {
-            output!.WriteLine($"[ingestion {(int)elapsed.Elapsed.TotalMinutes:00}:{elapsed.Elapsed.Seconds:00}] {message}");
+            output!.WriteLine($"[{label} {(int)elapsed.Elapsed.TotalMinutes:00}:{elapsed.Elapsed.Seconds:00}] {message}");
             output.Flush();
         }
         // A closed output pipe must not replace the ingestion result or its original error.

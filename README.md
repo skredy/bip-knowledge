@@ -2,7 +2,7 @@
 
 Assistant local de connaissance technique : ingestion de documents et de code, mémoire sourcée, recherche, enquêtes avec Copilot CLI et dossiers de travail persistants. .NET 10, SQLite FTS5, Razor Pages, partage par Git et MCP en lecture seule.
 
-**Version 0.3.9.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
+**Version 0.3.10.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
 
 ## Installer ou mettre à jour
 
@@ -20,7 +20,7 @@ Sous Linux :
 dotnet restore --locked-mode
 dotnet test --no-restore
 dotnet pack src/BipKb -c Release --no-restore -o artifacts
-dotnet tool install BipKb --version 0.3.9 --add-source ./artifacts --tool-path ./artifacts/tools
+dotnet tool install BipKb --version 0.3.10 --add-source ./artifacts --tool-path ./artifacts/tools
 ```
 
 ### Si vous avez une base 0.1 ou 0.2
@@ -90,6 +90,22 @@ Le choix s'applique à la commande, pas au format : Excel et Draw.io peuvent êt
 Les connaissances et décisions déjà publiées sont conservées si leurs sources sont inchangées. Les lots d'une analyse interrompue sont récupérés quand leur demande correspond encore exactement. Une modification de source peut rendre les anciennes conclusions historiques, même en indexation locale. Le rapport distingue `mode: "index"` et `mode: "analysis"`, avec `unanalyzedFiles` ; ce compteur n'est pas une erreur du mode local. Les images indexées seules sont explicitement signalées comme non analysées visuellement : utiliser `--analyze` pour leur contenu.
 
 Aucune migration n'est nécessaire depuis la 0.3.x. Les membres d'une équipe doivent mettre à jour leur outil avant de lire une mémoire enrichie avec ces nouveaux indicateurs. Un processus déjà lancé conserve son ancien comportement : l'interrompre avec Ctrl+C puis relancer après mise à jour pour changer de mode.
+
+### Construction de l'index local trop longue
+
+La 0.3.10 conserve chaque ensemble identique de preuves une seule fois dans SQLite, avec des liens depuis les objets techniques. Cela évite de matérialiser à nouveau chaque paire objet/preuve quand des centaines d'objets référencent toutes les unités d'un fichier. La mémoire partagée et ses références complètes sont conservées. Les résultats de recherche présentent au maximum 32 références par objet en indiquant quand il y en a davantage ; le graphe complet reste navigable dans les deux sens, et l'opération MCP `entity` conserve toutes les références de l'objet technique.
+
+Si une ingestion a atteint « Construction de l'index de recherche local », la mémoire a déjà été publiée. Après arrêt de l'ancien processus et mise à jour, reconstruire uniquement l'index depuis le workspace :
+
+```powershell
+bip-kb reindex
+# Ou depuis un autre répertoire :
+bip-kb reindex --workspace C:/Knowledge/ibip
+```
+
+Cette commande ne relit pas les fichiers sources et n'appelle pas Copilot. Elle affiche les étapes et compteurs (chargement, documents, relations, ensembles de preuves), puis la validation. `Ctrl+C` annule les boucles et les opérations SQLite ; un JSON de mémoire déjà en cours de lecture est terminé avant le prochain contrôle d'annulation. Une transaction interrompue ne remplace pas l'index précédemment validé. Ne pas effacer `memory/` ni la mémoire matérialisée pour cette opération.
+
+Le nouvel index est `.local/search-v6.db` ; l'ancien `search-v5.db` est ignoré et n'est pas supprimé automatiquement. Un petit fichier `.db` accompagné d'un gros `-wal` signifie que des écritures se trouvent dans le journal SQLite, pas que rien ne se passe. Après une ingestion locale, la 0.3.10 utilise directement la mémoire déjà chargée, avec contrôle de révision, au lieu de relire immédiatement tout le journal partagé.
 
 ### Si PowerShell trouve Copilot mais bip-kb ne peut pas le lancer
 

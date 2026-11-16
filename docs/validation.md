@@ -192,3 +192,31 @@ Mesure reproductible avec `python3 scripts/benchmark-ingestion.py --dotnet /work
 | Appels Copilot | 0 |
 
 Ce corpus contient de petits modèles C# et des procédures/tables SQL ; ces temps ne prédisent pas ceux d'un dépôt professionnel plus volumineux ou d'un poste Windows. Le gain principal vérifiable est la suppression de tous les appels au modèle pendant l'indexation. Le coût et la couverture du mode `--analyze` restent ceux d'une analyse exhaustive ; l'indexation seule ne constitue pas une interprétation métier ou visuelle préalable de tous les documents.
+
+## Version 0.3.10 — reconstruction d'un index dense
+
+Le poste professionnel a signalé 2 400 secondes à la construction SQLite, avec un fichier principal de 4 Ko, un WAL de 899 Mo et une mémoire matérialisée de 683 Mo. Le petit corpus du benchmark précédent ne représentait pas cette densité. Le code reliait chaque objet technique à toutes les unités de son fichier, répétait ces listes dans chaque résultat indexé et écrivait toutes les paires dans SQLite. Après publication, l'ingestion rechargeait également toute la mémoire au lieu de réutiliser son snapshot. Ces amplifications sont corrigées ; le temps exact sur le poste Windows/OneDrive n'a pas été mesuré ici.
+
+`search-v6.db` stocke des ensembles de preuves partagés, sans perte des associations, avec navigation dans les deux directions. Les listes de références des résultats sont bornées et signalées comme telles, mais les références complètes restent en mémoire et dans le graphe. Les commandes SQLite sont préparées, les paramètres réutilisés et les nouvelles entrées FTS ne font plus l'objet d'une suppression préalable inutile. Une ingestion utilise son snapshot publié avec contrôle de révision ; `reindex` reconstruit séparément sans fichiers sources ni Copilot. La mémoire JSON n'est pas compactée ni supprimée.
+
+**148 tests réussis, 4 ignorés sur Linux** (Copilot authentifié et trois tests Windows). Les nouveaux tests vérifient : stockage unique de listes équivalentes dans un ordre différent, navigation vers une preuve hors des 32 références affichées, accès aux preuves malgré de nombreuses relations techniques, absence de modification de mémoire, compteurs, annulation avec rollback et reconstruction ultérieure, publication concurrente détectée, absence de relecture d'un cache lorsque le snapshot publié est fourni, et réparation d'une entrée de texte intégral manquante malgré des empreintes de documents inchangées.
+
+Le **paquet 0.3.10 installé** passe le parcours terminal complet. Le scénario `reindex` supprime temporairement un fichier source et configure un exécutable Copilot inexistant : la reconstruction et la recherche fonctionnent, les fichiers de mémoire restent identiques et aucun appel Copilot n'a lieu. Les sorties JSON restent sans progression textuelle.
+
+Comparaison reproductible sous Linux, Release, avec `python3 scripts/benchmark-index.py --dotnet /workspace/.dotnet/dotnet --baseline-tool artifacts/verify-039/bip-kb` :
+
+| Mesure | Résultat |
+|---|---:|
+| Mémoire matérialisée synthétique | 645 004 504 octets |
+| Objets techniques / preuves | 20 000 / 20 000 |
+| Associations objet–preuve logiques | 4 000 000 |
+| Reconstruction 0.3.9, recherche incluse | 48,958 s |
+| Reconstruction optimisée, processus compris | 9,043 s |
+| Documents indexés | 40 000 |
+| Relations techniques stockées | 19 900 |
+| Appartenances aux ensembles de preuves | 20 000 |
+| Liens objet–ensemble | 20 000 |
+| Taille du nouvel index | 133 582 848 octets |
+| Recherche après reconstruction, processus compris | 0,288 s |
+
+Ce benchmark reproduit une forte répétition de références avec des identifiants de 64 caractères et une mémoire de plusieurs centaines de Mo. Il ne reproduit ni le contenu métier, ni le matériel, ni le comportement de synchronisation du poste utilisateur. L'annulation est contrôlée dans les boucles et transmise à SQLite ; la lecture/désérialisation synchrone d'un JSON en cours se termine avant le contrôle suivant. Le WAL peut croître pendant une transaction ; sa taille seule ne mesure pas l'avancement.

@@ -8,25 +8,38 @@ namespace BipKb;
 
 public sealed class SearchEngine(Workspace workspace)
 {
-    private string PathName=>Path.Combine(workspace.Local,"search-v5.db");
+    public string PathName=>Path.Combine(workspace.Local,"search-v6.db");
     private SqliteConnection Open()
     {
         Directory.CreateDirectory(workspace.Local);
         var db=new SqliteConnection(new SqliteConnectionStringBuilder{DataSource=PathName,Pooling=false,DefaultTimeout=20}.ToString());db.Open();return db;
     }
-    public void Refresh(bool force=false,Knowledge? supplied=null)
+    public void Refresh(bool force=false,Knowledge? supplied=null,Action<string>? progress=null,CancellationToken ct=default,string? suppliedRevision=null)
     {
+        try{RefreshCore(force,supplied,progress,ct,suppliedRevision);}
+        catch(SqliteException e) when(e.SqliteErrorCode==9&&ct.IsCancellationRequested){throw new OperationCanceledException("Construction de l'index annulée ; mémoire publiée conservée.",e,ct);}
+    }
+    private void RefreshCore(bool force,Knowledge? supplied,Action<string>? progress,CancellationToken ct,string? suppliedRevision)
+    {
+        ct.ThrowIfCancellationRequested();
+        progress?.Invoke("Index local — ouverture SQLite");
         var revision=workspace.SemanticRevision;
         using var db=Open();using var cmd=db.CreateCommand();
-        cmd.CommandText="PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE IF NOT EXISTS docs(id TEXT PRIMARY KEY,hash TEXT,kind TEXT,project TEXT,domain TEXT,role TEXT,historical INTEGER,state TEXT,body TEXT,title TEXT); CREATE INDEX IF NOT EXISTS doc_title ON docs(title COLLATE NOCASE); CREATE INDEX IF NOT EXISTS doc_scope ON docs(project,domain); CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(id UNINDEXED,title,text,tokenize='unicode61 remove_diacritics 2'); CREATE TABLE IF NOT EXISTS edges(src TEXT,dst TEXT,kind TEXT,PRIMARY KEY(src,dst,kind)); CREATE INDEX IF NOT EXISTS incoming ON edges(dst); CREATE TABLE IF NOT EXISTS profiles(id TEXT PRIMARY KEY,name TEXT,body TEXT);";cmd.ExecuteNonQuery();
+        using var interrupt=ct.Register(()=>SQLitePCL.raw.sqlite3_interrupt(db.Handle));
+        cmd.CommandText="PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-65536; CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE IF NOT EXISTS docs(id TEXT PRIMARY KEY,hash TEXT,kind TEXT,project TEXT,domain TEXT,role TEXT,historical INTEGER,state TEXT,body TEXT,title TEXT); CREATE INDEX IF NOT EXISTS doc_title ON docs(title COLLATE NOCASE); CREATE INDEX IF NOT EXISTS doc_scope ON docs(project,domain); CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(id UNINDEXED,title,text,tokenize='unicode61 remove_diacritics 2'); CREATE TABLE IF NOT EXISTS edges(src TEXT,dst TEXT,kind TEXT,PRIMARY KEY(src,dst,kind)); CREATE INDEX IF NOT EXISTS incoming ON edges(dst); CREATE TABLE IF NOT EXISTS proof_members(set_id TEXT,proof_id TEXT,PRIMARY KEY(set_id,proof_id)); CREATE INDEX IF NOT EXISTS proof_incoming ON proof_members(proof_id); CREATE TABLE IF NOT EXISTS node_proofs(node_id TEXT PRIMARY KEY,set_id TEXT); CREATE INDEX IF NOT EXISTS proof_nodes ON node_proofs(set_id); CREATE TABLE IF NOT EXISTS profiles(id TEXT PRIMARY KEY,name TEXT,body TEXT);";cmd.ExecuteNonQuery();
         cmd.CommandText="SELECT value FROM meta WHERE key='revision'";
-        if(!force&&(string?)cmd.ExecuteScalar()==revision)return;
+        if(!force&&(string?)cmd.ExecuteScalar()==revision){progress?.Invoke("Index local déjà à jour");return;}
         using var gate=new FileStream(Path.Combine(workspace.Local,"search.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
-        // Read a consistent published revision, never partially staged ingestion work.
+        progress?.Invoke(supplied==null?"Index local — chargement de la mémoire publiée":"Index local — utilisation de la mémoire déjà chargée");
+        // A supplied snapshot must never be stamped with a later revision after concurrent publication.
+        if(supplied!=null&&suppliedRevision!=null&&revision!=suppliedRevision)throw new RevisionConflictException("La mémoire a changé avant l'indexation ; relancez reindex.");
         Knowledge k;List<Decision> decisions;string after;
-        do{revision=workspace.SemanticRevision;k=supplied??workspace.Load();decisions=workspace.Decisions();after=workspace.SemanticRevision;}while(supplied==null&&after!=revision);
+        do{ct.ThrowIfCancellationRequested();revision=workspace.SemanticRevision;k=supplied??workspace.Load();decisions=workspace.Decisions();after=workspace.SemanticRevision;}while(supplied==null&&after!=revision);
+        if(supplied!=null&&suppliedRevision!=null&&after!=suppliedRevision)throw new RevisionConflictException("La mémoire a changé avant l'indexation ; relancez reindex.");
+        ct.ThrowIfCancellationRequested();
+        progress?.Invoke($"Index local — préparation : {k.Evidence.Count} preuves, {k.Objects.Count} objets, {k.Relations.Count} relations");
         var claimsByEntity=k.Claims.GroupBy(c=>c.EntityId).ToDictionary(g=>g.Key,g=>g.ToArray());
-        var entities=k.Entities.ToDictionary(e=>e.Id);var evidence=k.Evidence.ToDictionary(e=>e.Id);var activeEvidence=k.Sources.Where(s=>s.Active).SelectMany(s=>s.EvidenceIds).ToHashSet();
+        var entities=k.Entities.ToDictionary(e=>e.Id);var activeEvidence=k.Sources.Where(s=>s.Active).SelectMany(s=>s.EvidenceIds).ToHashSet();
         var sourceByEvidence=k.Sources.SelectMany(s=>s.EvidenceIds.Select(id=>(id,s))).GroupBy(x=>x.id).ToDictionary(g=>g.Key,g=>g.OrderByDescending(x=>x.s.Active).First().s);
         var effective=decisions.GroupBy(d=>d.ClaimId).ToDictionary(g=>g.Key,g=>Workspace.Effective(g,g.Key));
         var distinct=effective.Where(p=>p.Value.Count>0&&p.Value.All(d=>d.Action=="distinct")).Select(p=>p.Key).ToHashSet();
@@ -34,6 +47,7 @@ public sealed class SearchEngine(Workspace workspace)
         var docs=new List<SearchHit>();
         foreach(var c in k.Claims)
         {
+            ct.ThrowIfCancellationRequested();
             var state=c.Obsolete?KnowledgeState.Reexamine:c.State;
             if(effective.TryGetValue(c.Id,out var ds)){state=ds.Select(d=>d.Action).Distinct().Count()>1?KnowledgeState.Reexamine:ds[0].Action=="reject"?KnowledgeState.Rejected:KnowledgeState.Accepted;}
             if(effective.TryGetValue(c.Id,out var reviewed)&&reviewed.Any(d=>d.EvidenceFingerprint!=Json.Hash(string.Join("",c.EvidenceIds.Where(activeEvidence.Contains).Order()))))state=KnowledgeState.Reexamine;
@@ -42,33 +56,98 @@ public sealed class SearchEngine(Workspace workspace)
         }
         foreach(var e in k.Evidence)
         {
+            ct.ThrowIfCancellationRequested();
             sourceByEvidence.TryGetValue(e.Id,out var source);
             docs.Add(new(e.Id,"evidence",e.RelativePath+" "+e.Locator,e.Excerpt,source?.Context?.Project,source?.Context?.Domain,source?.Role,[e.Id],0,["source:"+e.SourceId],KnowledgeState.Proposed,!activeEvidence.Contains(e.Id),SourceStatus:source?.Context?.Status));
         }
         foreach(var e in k.Entities)
         {
+            ct.ThrowIfCancellationRequested();
             var related=claimsByEntity.GetValueOrDefault(e.Id)??[];var context=related.Select(c=>c.Context).FirstOrDefault(c=>c!=null);
             docs.Add(new(e.Id,"entity",e.Name,string.Join(" ",e.Aliases??[]),e.Project??context?.Project,e.Domain??context?.Domain,null,related.SelectMany(c=>c.EvidenceIds).Distinct().Take(20).ToArray(),0,[],KnowledgeState.Proposed,related.Length>0&&related.All(c=>c.Obsolete)));
         }
-        foreach(var o in k.Objects)docs.Add(new(o.Id,o.Kind,o.Name,o.Parent??"",o.Project,o.Domain,o.EvidenceIds.Select(id=>sourceByEvidence.GetValueOrDefault(id)).FirstOrDefault(s=>s?.Active==true)?.Role,o.EvidenceIds,0,[],KnowledgeState.Proposed,!o.Active));
+        foreach(var o in k.Objects)
+        {
+            ct.ThrowIfCancellationRequested();
+            var sampled=o.EvidenceIds.Take(32).ToArray();
+            var reasons=o.EvidenceIds.Length>32?new[]{$"32 références affichées sur {o.EvidenceIds.Length} ; ensemble complet conservé dans le graphe et la mémoire"}:Array.Empty<string>();
+            docs.Add(new(o.Id,o.Kind,o.Name,o.Parent??"",o.Project,o.Domain,o.EvidenceIds.Select(id=>sourceByEvidence.GetValueOrDefault(id)).FirstOrDefault(s=>s?.Active==true)?.Role,sampled,0,reasons,KnowledgeState.Proposed,!o.Active));
+        }
         foreach(var declaration in k.Questions.Where(q=>q.Answer!=null))docs.Add(new(declaration.Id,"declaration",declaration.Text,declaration.Answer!,declaration.Project,null,null,declaration.EvidenceIds,0,["Déclaré par "+declaration.Actor],KnowledgeState.Proposed,Origin:KnowledgeOrigin.Declared));
         using var tx=db.BeginTransaction();cmd.Transaction=tx;
-        cmd.CommandText="SELECT id,hash FROM docs";var hashes=new Dictionary<string,string>();using(var r=cmd.ExecuteReader()){while(r.Read())hashes[r.GetString(0)]=r.GetString(1);}
+        if(force)
+        {
+            ct.ThrowIfCancellationRequested();progress?.Invoke("Index local — reconstruction complète des documents et du texte intégral");
+            // A rebuild must repair a missing FTS row even when the document hash still matches.
+            // These deletes roll back with the rest of the transaction on cancellation/failure.
+            cmd.CommandText="DELETE FROM search; DELETE FROM docs;";cmd.ExecuteNonQuery();
+        }
+        SqliteCommand Prepared(string sql,params string[] names)
+        {
+            var c=db.CreateCommand();c.Transaction=tx;c.CommandText=sql;
+            foreach(var name in names)c.Parameters.Add(new SqliteParameter(name,SqliteType.Text));
+            c.Prepare();return c;
+        }
+        using var deleteSearch=Prepared("DELETE FROM search WHERE rowid=(SELECT rowid FROM docs WHERE id=$id)","$id");
+        using var writeDoc=Prepared("INSERT INTO docs VALUES($id,$hash,$kind,$project,$domain,$role,$old,$state,$body,$title) ON CONFLICT(id) DO UPDATE SET hash=excluded.hash,kind=excluded.kind,project=excluded.project,domain=excluded.domain,role=excluded.role,historical=excluded.historical,state=excluded.state,body=excluded.body,title=excluded.title","$id","$hash","$kind","$project","$domain","$role","$old","$state","$body","$title");
+        using var writeSearch=Prepared("INSERT INTO search(rowid,id,title,text) SELECT rowid,$id,$title,$text FROM docs WHERE id=$id","$id","$title","$text");
+        using var deleteDoc=Prepared("DELETE FROM docs WHERE id=$id","$id");
+        cmd.CommandText="SELECT id,hash FROM docs";var hashes=new Dictionary<string,string>();using(var r=cmd.ExecuteReader()){while(r.Read()){ct.ThrowIfCancellationRequested();hashes[r.GetString(0)]=r.GetString(1);}}
+        var processed=0;
         foreach(var d in docs)
         {
+            ct.ThrowIfCancellationRequested();
+            if(processed%500==0)progress?.Invoke($"Index local — documents {processed}/{docs.Count}");
+            processed++;
             var body=Json.Serialize(d);var hash=Json.Hash(body);
             if(hashes.TryGetValue(d.Id,out var previous)&&previous==hash){hashes.Remove(d.Id);continue;}
-            cmd.Parameters.Clear();cmd.CommandText="DELETE FROM search WHERE rowid=(SELECT rowid FROM docs WHERE id=$id); INSERT INTO docs VALUES($id,$hash,$kind,$project,$domain,$role,$old,$state,$body,$title) ON CONFLICT(id) DO UPDATE SET hash=excluded.hash,kind=excluded.kind,project=excluded.project,domain=excluded.domain,role=excluded.role,historical=excluded.historical,state=excluded.state,body=excluded.body,title=excluded.title; INSERT INTO search(rowid,id,title,text) SELECT rowid,$id,$title,$text FROM docs WHERE id=$id";
-            cmd.Parameters.AddWithValue("$id",d.Id);cmd.Parameters.AddWithValue("$title",d.Title);cmd.Parameters.AddWithValue("$text",d.Text);cmd.Parameters.AddWithValue("$hash",hash);cmd.Parameters.AddWithValue("$kind",d.Kind);cmd.Parameters.AddWithValue("$project",(object?)d.Project??DBNull.Value);cmd.Parameters.AddWithValue("$domain",(object?)d.Domain??DBNull.Value);cmd.Parameters.AddWithValue("$role",(object?)d.Role?.ToString()??DBNull.Value);cmd.Parameters.AddWithValue("$old",d.Historical?1:0);cmd.Parameters.AddWithValue("$state",d.State.ToString());cmd.Parameters.AddWithValue("$body",body);cmd.ExecuteNonQuery();hashes.Remove(d.Id);
+            if(previous!=null){deleteSearch.Parameters["$id"].Value=d.Id;deleteSearch.ExecuteNonQuery();}
+            writeDoc.Parameters["$id"].Value=d.Id;writeDoc.Parameters["$hash"].Value=hash;writeDoc.Parameters["$kind"].Value=d.Kind;
+            writeDoc.Parameters["$project"].Value=(object?)d.Project??DBNull.Value;writeDoc.Parameters["$domain"].Value=(object?)d.Domain??DBNull.Value;
+            writeDoc.Parameters["$role"].Value=(object?)d.Role?.ToString()??DBNull.Value;writeDoc.Parameters["$old"].Value=d.Historical?"1":"0";
+            writeDoc.Parameters["$state"].Value=d.State.ToString();writeDoc.Parameters["$body"].Value=body;writeDoc.Parameters["$title"].Value=d.Title;writeDoc.ExecuteNonQuery();
+            writeSearch.Parameters["$id"].Value=d.Id;writeSearch.Parameters["$title"].Value=d.Title;writeSearch.Parameters["$text"].Value=d.Text;writeSearch.ExecuteNonQuery();hashes.Remove(d.Id);
         }
-        foreach(var id in hashes.Keys){cmd.Parameters.Clear();cmd.Parameters.AddWithValue("$id",id);cmd.CommandText="DELETE FROM search WHERE rowid=(SELECT rowid FROM docs WHERE id=$id); DELETE FROM docs WHERE id=$id";cmd.ExecuteNonQuery();}
-        cmd.Parameters.Clear();cmd.CommandText="DELETE FROM edges; DELETE FROM profiles;";cmd.ExecuteNonQuery();
-        void Edge(string from,string to,string kind){cmd.Parameters.Clear();cmd.CommandText="INSERT OR IGNORE INTO edges VALUES($a,$b,$k)";cmd.Parameters.AddWithValue("$a",from);cmd.Parameters.AddWithValue("$b",to);cmd.Parameters.AddWithValue("$k",kind);cmd.ExecuteNonQuery();}
+        progress?.Invoke($"Index local — documents {processed}/{docs.Count} ; retrait des entrées obsolètes");
+        foreach(var id in hashes.Keys){ct.ThrowIfCancellationRequested();deleteSearch.Parameters["$id"].Value=id;deleteSearch.ExecuteNonQuery();deleteDoc.Parameters["$id"].Value=id;deleteDoc.ExecuteNonQuery();}
+        cmd.CommandText="DELETE FROM edges; DELETE FROM node_proofs; DELETE FROM proof_members; DELETE FROM profiles;";cmd.ExecuteNonQuery();
+        using var edge=Prepared("INSERT OR IGNORE INTO edges VALUES($a,$b,$k)","$a","$b","$k");
+        long links=0;
+        void Edge(string from,string to,string kind)
+        {
+            ct.ThrowIfCancellationRequested();
+            edge.Parameters["$a"].Value=from;edge.Parameters["$b"].Value=to;edge.Parameters["$k"].Value=kind;edge.ExecuteNonQuery();
+            if(++links%10000==0)progress?.Invoke($"Index local — {links} relations écrites");
+        }
+        progress?.Invoke("Index local — écriture des relations");
         foreach(var c in k.Claims){Edge(c.EntityId,c.Id,"assertion");foreach(var id in c.EvidenceIds)Edge(c.Id,id,"proof");foreach(var id in c.RelatedClaimIds.Where(_=>!distinct.Contains(c.Id)))Edge(c.Id,id,c.Contribution.ToString());}
-        foreach(var o in k.Objects)foreach(var id in o.EvidenceIds)Edge(o.Id,id,"proof");
+        // Store an identical set of source proofs only once, instead of every object × every file unit.
+        using var member=Prepared("INSERT OR IGNORE INTO proof_members VALUES($set,$id)","$set","$id");
+        using var node=Prepared("INSERT INTO node_proofs VALUES($id,$set)","$id","$set");
+        var sets=new HashSet<string>();long memberships=0;var objects=0;
+        foreach(var o in k.Objects)
+        {
+            ct.ThrowIfCancellationRequested();
+            var proofIds=o.EvidenceIds.Distinct().Order(StringComparer.Ordinal).ToArray();
+            var set=Json.Hash(string.Join("\n",proofIds));
+            if(sets.Add(set))
+                foreach(var id in proofIds)
+                {
+                    ct.ThrowIfCancellationRequested();member.Parameters["$set"].Value=set;member.Parameters["$id"].Value=id;member.ExecuteNonQuery();memberships++;
+                    if(memberships%10000==0)progress?.Invoke($"Index local — {memberships} références de preuve, {sets.Count} ensembles partagés");
+                }
+            node.Parameters["$id"].Value=o.Id;node.Parameters["$set"].Value=set;node.ExecuteNonQuery();
+            if(++objects%500==0)progress?.Invoke($"Index local — objets reliés aux preuves {objects}/{k.Objects.Count}, {memberships} références stockées");
+        }
         foreach(var r in k.Relations.Where(r=>r.State!=KnowledgeState.Rejected&&!distinct.Contains(r.From)&&r.EvidenceIds.Any(activeEvidence.Contains)))Edge(r.From,r.To,r.Kind.ToString());
-        foreach(var p in k.Projects){cmd.Parameters.Clear();cmd.CommandText="INSERT INTO profiles VALUES($id,$name,$body)";cmd.Parameters.AddWithValue("$id",p.Id);cmd.Parameters.AddWithValue("$name",p.Name);cmd.Parameters.AddWithValue("$body",Json.Serialize(p));cmd.ExecuteNonQuery();}
-        cmd.Parameters.Clear();cmd.CommandText="INSERT OR REPLACE INTO meta VALUES('revision',$r)";cmd.Parameters.AddWithValue("$r",revision);cmd.ExecuteNonQuery();tx.Commit();
+        using var profile=Prepared("INSERT INTO profiles VALUES($id,$name,$body)","$id","$name","$body");
+        foreach(var p in k.Projects){ct.ThrowIfCancellationRequested();profile.Parameters["$id"].Value=p.Id;profile.Parameters["$name"].Value=p.Name;profile.Parameters["$body"].Value=Json.Serialize(p);profile.ExecuteNonQuery();}
+        ct.ThrowIfCancellationRequested();
+        if(workspace.SemanticRevision!=revision)throw new RevisionConflictException("La mémoire a changé pendant l'indexation ; relancez reindex. L'ancien index reste intact.");
+        progress?.Invoke($"Index local — validation : {docs.Count} documents, {links} relations, {memberships} références partagées");
+        cmd.Parameters.Clear();cmd.CommandText="INSERT OR REPLACE INTO meta VALUES('revision',$r)";cmd.Parameters.AddWithValue("$r",revision);cmd.ExecuteNonQuery();
+        ct.ThrowIfCancellationRequested();tx.Commit();
+        progress?.Invoke("Index local terminé");
     }
     public static string Normalize(string s)=>string.Concat(s.Normalize(NormalizationForm.FormD).Where(c=>CharUnicodeInfo.GetUnicodeCategory(c)!=UnicodeCategory.NonSpacingMark)).ToLowerInvariant();
     public static string[] Terms(string text)
@@ -119,7 +198,7 @@ public sealed class SearchEngine(Workspace workspace)
             var frontier=hits.Values.OrderByDescending(h=>h.Score).Where(h=>!visited.Contains(h.Id)).Take(30).ToArray();
             foreach(var h in frontier)
             {
-                visited.Add(h.Id);cmd.Parameters.Clear();cmd.CommandText="SELECT d.body,e.kind FROM edges e JOIN docs d ON d.id=CASE WHEN e.src=$id THEN e.dst ELSE e.src END WHERE e.src=$id OR e.dst=$id LIMIT 30";cmd.Parameters.AddWithValue("$id",h.Id);
+                visited.Add(h.Id);cmd.Parameters.Clear();cmd.CommandText="SELECT body,kind FROM (SELECT d.body,'proof' AS kind FROM node_proofs n JOIN proof_members m ON m.set_id=n.set_id JOIN docs d ON d.id=m.proof_id WHERE n.node_id=$id LIMIT 10) UNION ALL SELECT d.body,e.kind FROM edges e JOIN docs d ON d.id=CASE WHEN e.src=$id THEN e.dst ELSE e.src END WHERE e.src=$id OR e.dst=$id UNION ALL SELECT d.body,'proof' FROM proof_members m JOIN node_proofs n ON n.set_id=m.set_id JOIN docs d ON d.id=n.node_id WHERE m.proof_id=$id LIMIT 30";cmd.Parameters.AddWithValue("$id",h.Id);
                 var adjacent=new List<(SearchHit Hit,string Kind)>();using(var r=cmd.ExecuteReader()){while(r.Read())adjacent.Add((Json.Read<SearchHit>(r.GetString(0)),r.GetString(1)));}
                 foreach(var n in adjacent)Add(n.Hit,Math.Max(1,h.Score-4-depth),$"{n.Kind} via {h.Id}");
             }

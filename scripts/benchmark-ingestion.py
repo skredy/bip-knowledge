@@ -54,12 +54,15 @@ def main():
         assert unchanged["unchanged"] == args.count
         search, query = run("search", "Commande1")
         assert search["hits"]
-        with sqlite3.connect(kb / ".local" / "search-v5.db") as db:
+        with sqlite3.connect(kb / ".local" / "search-v6.db") as db:
             documents = db.execute("select count(*) from docs").fetchone()[0]
             edges = db.execute("select count(*) from edges").fetchone()[0]
+            proof_members = db.execute("select count(*) from proof_members").fetchone()[0]
+            proof_nodes = db.execute("select count(*) from node_proofs").fetchone()[0]
         print(json.dumps({"files": args.count, "sourceBytes": total_bytes, "indexedDocuments": documents, "indexedEdges": edges,
                           "firstIngestionSeconds": round(first, 3), "unchangedIngestionSeconds": round(second, 3),
                           "searchProcessSeconds": round(query, 3), "searchReportedMilliseconds": search["milliseconds"],
+                          "proofMembershipRows": proof_members, "proofNodeRows": proof_nodes,
                           "copilotCalls": 0, "corpus": "synthetic C#/SQL; not a prediction for a production repository"}, indent=2))
 
 

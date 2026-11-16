@@ -10,7 +10,7 @@ public static class Cli
     public static async Task<int> Run(string[] args)
     {
         if(args.Length==1 && args[0] is "--help" or "-h")args=["help"];
-        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.3.9");return 0;}
+        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.3.10");return 0;}
         using var cancel=new CancellationTokenSource();
         Console.CancelKeyPress+=(_,e)=>{e.Cancel=true;cancel.Cancel();};
         try
@@ -47,7 +47,8 @@ bip-kb — Mémoire technique sourcée
   search <query> | ask <question> | context <task> [--output <file>]
   report <ingestion-id> | review
   review <claim-id> --action accept|reject|distinct|replace --reason <text> --actor <name>
-  export --output <empty-directory> | import
+  export --output <empty-directory> | import | reindex
+      reindex rebuilds local search from published memory, without re-ingestion or Copilot.
   doctor [--live] | serve [--port 5267] | mcp
 All commands: --workspace <directory>, --json. Quote multiword arguments.
 """); return 0;
@@ -105,6 +106,10 @@ All commands: --workspace <directory>, --json. Quote multiword arguments.
                 case "context":
                     var context=service.Context(Required(1),parsed.Get("project"),parsed.Get("domain"));if(parsed.Get("output") is {} output){File.WriteAllText(output,context);result=new{output};}else result=context;break;
                 case "report":result=workspace.Load().Reports.SingleOrDefault(r=>r.Id==Required(1))??throw new ArgumentException("Unknown report.");break;
+                case "reindex":
+                    await using(var indexProgress=new IngestionProgress(parsed.Has("json")?null:Console.Error,label:"index"))
+                        new SearchEngine(workspace).Refresh(force:true,progress:indexProgress.Report,ct:cancel.Token);
+                    result=new{status="indexed",index=new SearchEngine(workspace).PathName};break;
                 case "review":
                     result=parsed.Words.Count==1?workspace.Review(workspace.Load()).Select(c=>service.Detail(c.Id)).ToArray():workspace.Decide(Required(1),parsed.Get("action")??"",parsed.Get("reason")??"",parsed.Get("actor")??"");break;
                 case "import":service.Import();result=new{status="validated and indexed",decisionConflicts=workspace.Load().Claims.Count(c=>Workspace.Conflict(workspace.Decisions(),c.Id))};break;
