@@ -294,3 +294,12 @@ L'aide de Copilot CLI 1.0.111 annonce `piped stdin` ; son implémentation accept
 Le script PowerShell conservait une version 0.4.0 codée en dur alors que le projet produisait la 0.4.1. Il lit maintenant `PackageVersion` via MSBuild, vérifie la présence du paquet attendu et distingue les étapes restauration, compilation, tests, packaging et installation. Le workflow Windows/Linux exécute ce même script.
 
 Validation locale avec PowerShell 7.5.4 sous Linux : installation neuve dans un chemin contenant des espaces, puis mise à jour d'une installation 0.4.0 vers 0.4.1. Les deux parcours complets réussissent (195 tests réussis, cinq ignorés) et l'outil neuf affiche `bip-kb 0.4.1`. Le verrou système NuGet a nécessité une exécution hors du sandbox de fichiers du cloud ; ce problème local n'est pas attribué au poste Windows de l'utilisateur. Le message « build fail » signalé sans journal détaillé n'a pas été reproduit et sa cause précise reste à identifier.
+
+
+## Version 0.4.2 — sorties UTF-8 indépendantes de la console Windows
+
+Le journal Windows fourni par l'utilisateur montrait un échec de `StandardInputPreservesLargeUnicodePayloadWithoutCommandLineOrShellInterpretation` : `é` devenait `├⌐`. L'entrée du processus était explicitement UTF-8, mais ses sorties utilisaient encore l'encodage par défaut de la console. `Processes.Run` impose désormais UTF-8 pour stdin, stdout et stderr.
+
+Le nouveau test `Utf8ProcessOutputAndErrorsOverrideLegacyWindowsCodePage` initialise le décodage avec CP850, lance un processus Node qui émet de l'UTF-8 sur les deux sorties et vérifie les textes ainsi que le code de sortie non nul. Il échoue avant le correctif et réussit après. Il ne modifie pas l'encodage global de la console et peut donc s'exécuter avec les autres tests en parallèle. Le test Unicode signalé par l'utilisateur est conservé et passe également localement.
+
+Validation Linux : **196 tests réussis, cinq ignorés**, compilation sans avertissement, exécution complète de `scripts/install.ps1` sous PowerShell 7.5.4 et mise à jour effective de l'outil 0.4.1 vers 0.4.2. Le workflow existant exécute le même script sur Windows et Linux ; aucun résultat du nouveau run Windows n'est encore revendiqué.

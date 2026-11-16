@@ -86,6 +86,17 @@ public class CopilotLaunchTests
         Assert.Equal(0,result.ExitCode);Assert.Equal(payload,result.Output);
     }
     [NodeFact]
+    public async Task Utf8ProcessOutputAndErrorsOverrideLegacyWindowsCodePage()
+    {
+        System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+        using var s=new Sandbox();var payload="é 漢字 👋 — réponse et erreur\r\n";
+        var script=Put(s.Root,"utf8.js","const value="+Json.Serialize(payload)+";process.stdout.write(value);process.stderr.write(value);process.exitCode=3;");
+        var legacy=System.Text.Encoding.GetEncoding(850);
+        var start=new System.Diagnostics.ProcessStartInfo(NodeExecutable()!){StandardOutputEncoding=legacy,StandardErrorEncoding=legacy};start.ArgumentList.Add(script);
+        var result=await Processes.Run(start,TimeSpan.FromSeconds(10),default);
+        Assert.Equal(3,result.ExitCode);Assert.Equal(payload,result.Output);Assert.Equal(payload,result.Error);
+    }
+    [NodeFact]
     public async Task TimeoutAlsoInterruptsAChildThatDoesNotReadItsInput()
     {
         using var s=new Sandbox();var script=Put(s.Root,"blocked.js","setInterval(()=>{},10000);");

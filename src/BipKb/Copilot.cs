@@ -11,6 +11,9 @@ public static class Processes
     {
         start.UseShellExecute=false; start.RedirectStandardOutput=true; start.RedirectStandardError=true; start.RedirectStandardInput=true;
         start.StandardInputEncoding=new UTF8Encoding(false);
+        // Copilot/Node emit UTF-8 regardless of the Windows console code page.
+        start.StandardOutputEncoding=new UTF8Encoding(false);
+        start.StandardErrorEncoding=new UTF8Encoding(false);
         using var process=Process.Start(start)??throw new IOException("Unable to start process.");
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(ct); deadline.CancelAfter(timeout);
         IOException? inputFailure=null;
