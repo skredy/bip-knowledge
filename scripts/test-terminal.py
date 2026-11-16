@@ -106,17 +106,20 @@ import json, pathlib, sys
 args=sys.argv[1:]
 root=pathlib.Path(__file__).parent
 if '--help' in args:
- print('--prompt --silent --deny-tool --available-tools --disable-builtin-mcps --no-custom-instructions --no-auto-update --stream --attachment --no-color --no-ask-user');sys.exit(0)
+ print('--prompt --silent --deny-tool --available-tools --disable-builtin-mcps --no-custom-instructions --no-auto-update --stream --attachment --no-color --no-ask-user --output-format');sys.exit(0)
 if '--version' in args:
  print('terminal-test-fixture');sys.exit(0)
 assert '--allow-all' not in args and 'shell' in args and 'write' in args
 assert args[args.index('--available-tools')+1]=='--prompt'
+assert args[args.index('--output-format')+1]=='json'
 with (root/'calls').open('a') as log: log.write('analysis\\n')
 if (root/'fail').exists():
  (root/'fail').unlink();print('Simulated provider failure',file=sys.stderr);sys.exit(1)
 prompt=args[args.index('--prompt')+1]
 data=json.loads(prompt.split('UNTRUSTED_DATA\\n',1)[1])
-print(json.dumps({'findings':[] if data['phase']=='reconcile' else [{'entity':'Facture','kind':'rule','statement':u['text'],'contribution':'new','evidenceIds':[u['id']]} for u in data['units']]}))
+response=json.dumps({'findings':[] if data['phase']=='reconcile' else [{'entity':'Facture','kind':'rule','statement':u['text'],'contribution':'new','evidenceIds':[u['id']]} for u in data['units']]})
+print(json.dumps({'type':'assistant.message','data':{'content':response}}))
+print(json.dumps({'type':'result','exitCode':0}))
 ''', encoding="utf-8")
         fixture.chmod(0o700)
         config_path = kb / "bip.json"

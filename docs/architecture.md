@@ -56,7 +56,9 @@ Chaque processus d’analyse démarre dans un dossier privé créé par `Directo
 
 Les unités et références sont bornées à 18 000 caractères de demande structurée ; les arguments encodés sont limités à 30 000 caractères pour Windows. Les sorties dépassant 2 Mo sont rejetées. Timeout/annulation terminent l'arbre du processus ; seules les erreurs transitoires 429/502/503/504 ont deux reprises maximum. Les sorties d'erreur du fournisseur ne sont pas réimprimées avec les documents ou secrets.
 
-La réponse JSON est strictement désérialisée et ses références validées contre les éléments fournis. Cela établit la provenance, pas la vérité métier ni la compréhension visuelle. Une image sans capacité de pièce jointe provoque une erreur explicite.
+La sortie machine JSONL est sélectionnée si `--output-format` est annoncé dans l'aide. Le dernier événement `assistant.message` complet fournit la réponse ; les deltas et événements d'outils sont ignorés. Un événement final `result` avec `exitCode: 0` est requis en plus du succès du processus. Un flux incomplet ou invalide est rejeté, sans repli silencieux vers le texte. Les anciennes CLI sans cette option conservent la sortie texte.
+
+Le JSON métier peut être entouré d'un bloc Markdown complet. Si sa lecture échoue, seuls les LF, CR et tabulations littéraux à l'intérieur des chaînes sont encodés sans modifier leur valeur. Aucun champ, délimiteur ni identifiant n'est inventé ; les échappements ambigus restent rejetés. Le JSON est ensuite strictement désérialisé et ses références validées contre les éléments fournis. Cela établit la provenance, pas la vérité métier ni la compréhension visuelle. Une image sans capacité de pièce jointe provoque une erreur explicite.
 
 L'interface écoute uniquement sur 127.0.0.1, vérifie le Host et utilise antiforgery sur les POST. Razor encode les contenus. Ce n'est pas un serveur multi-utilisateur ; le partage concerne les fichiers Git.
 

@@ -2,7 +2,7 @@
 
 Assistant local de connaissance technique : ingestion de documents et de code, mémoire sourcée, recherche, enquêtes avec Copilot CLI et dossiers de travail persistants. .NET 10, SQLite FTS5, Razor Pages, partage par Git et MCP en lecture seule.
 
-**Version 0.3.5.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
+**Version 0.3.6.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
 
 ## Installer ou mettre à jour
 
@@ -20,7 +20,7 @@ Sous Linux :
 dotnet restore --locked-mode
 dotnet test --no-restore
 dotnet pack src/BipKb -c Release --no-restore -o artifacts
-dotnet tool install BipKb --version 0.3.5 --add-source ./artifacts --tool-path ./artifacts/tools
+dotnet tool install BipKb --version 0.3.6 --add-source ./artifacts --tool-path ./artifacts/tools
 ```
 
 ### Si vous avez une base 0.1 ou 0.2
@@ -93,6 +93,12 @@ bip-kb ne lance pas les scripts d'installation VS Code, ne contourne pas les pol
 Les versions antérieures à 0.3.5 créaient le dossier de travail Copilot dans le workspace. Un refus d'accès pendant son nettoyage pouvait masquer la réponse ou l'erreur d'analyse. À partir de la 0.3.5, les appels utilisent un dossier privé `bip-kb-copilot-*` dans le répertoire temporaire système (`%TEMP%` sous Windows), habituellement hors de OneDrive. `doctor` affiche `temporaryRoot` ; `doctor --live` vérifie aussi un appel réel.
 
 Le nettoyage réessaie brièvement les fichiers verrouillés et traite les fichiers en lecture seule sans modifier les droits du workspace. S'il reste impossible, un avertissement indique le dossier restant, qui peut contenir des pièces jointes ; il ne remplace plus le résultat de Copilot. Les contextes et analyses intermédiaires restent dans le workspace. Après mise à jour, relancer la même commande sans `--describe` ni `--reanalyze` pour reprendre le travail disponible.
+
+### Réponse Copilot contenant un retour à la ligne JSON invalide
+
+À partir de la 0.3.6, bip-kb demande la sortie machine `--output-format json` lorsque la CLI la propose. `doctor` indique `responseFormat: "jsonl"` (sinon `"text"` pour les anciennes CLI). Le lecteur utilise le dernier message assistant complet et exige une confirmation de fin réussie ; les événements de progression ne deviennent pas des réponses.
+
+Si le JSON produit par le modèle contient un retour à la ligne ou une tabulation non échappés dans une chaîne, bip-kb en corrige uniquement l'encodage, en conservant le texte. Les champs attendus et références restent contrôlés ; les autres erreurs ne sont pas réparées arbitrairement. Une mise à jour ne nécessite aucune nouvelle saisie du contexte : vérifier `bip-kb doctor --live`, puis relancer la même ingestion.
 
 ## Ingérer sans préciser le format
 
