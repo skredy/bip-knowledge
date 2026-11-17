@@ -32,7 +32,31 @@ Dans la palette de commandes, lancez **MCP: List Servers**, sélectionnez `bip-k
 
 VS Code démarre lui-même `bip-kb mcp`. Il n'est pas nécessaire de lancer `bip-kb serve`, de choisir un port ou de garder un terminal ouvert. Le workspace est fixé dans cette configuration : vous n'avez pas à le répéter dans vos demandes à Copilot.
 
-Pour Visual Studio, JetBrains ou un autre client prenant en charge les serveurs MCP stdio, reprenez le même exécutable et les mêmes arguments dans sa configuration. L'enveloppe JSON dépend du client ; le bloc `servers` ci-dessus est celui de VS Code.
+Pour Visual Studio ou un autre client prenant en charge les serveurs MCP stdio, reprenez le même exécutable et les mêmes arguments dans sa configuration. L'enveloppe JSON dépend du client.
+
+### Dans le plugin GitHub Copilot de JetBrains (Rider, IntelliJ…)
+
+1. Ouvrez **GitHub Copilot Chat** depuis l'icône Copilot et choisissez le mode **Agent**.
+2. En bas du chat, cliquez sur l'icône des outils intitulée **Configure your MCP server**.
+3. Cliquez sur **Add MCP Tools** pour ouvrir le fichier `mcp.json` géré par le plugin.
+4. Ajoutez la configuration suivante, en conservant les éventuels autres serveurs et en adaptant les chemins :
+
+```json
+{
+  "servers": {
+    "bip-kb": {
+      "command": "C:/Users/TON_UTILISATEUR/.bip-tools/bip-kb.exe",
+      "args": ["mcp", "--workspace", "C:/Knowledge/ibip"]
+    }
+  }
+}
+```
+
+Enregistrez, puis vérifiez dans le sélecteur d'outils du chat que les outils de `bip-kb` sont disponibles et activés. Utilisez le test de connexion ci-dessous. Le plugin lance le processus local ; aucun port ni `bip-kb serve` n'est nécessaire. Configurez le fichier ouvert par **Add MCP Tools** : la présence de `.vscode/mcp.json` dans le dépôt ne confirme pas une configuration du plugin JetBrains.
+
+Si ces options n'apparaissent pas, vérifiez la mise à jour du plugin GitHub Copilot, le mode Agent et la politique MCP de votre entreprise. Cette procédure concerne **GitHub Copilot**, dont la configuration est distincte de celle de JetBrains AI Assistant.
+
+Procédure vérifiée dans la [documentation officielle GitHub pour JetBrains](https://docs.github.com/en/copilot/how-tos/copilot-in-your-ide/customize-copilot/extend-copilot-with-tools-and-context/extend-copilot-chat-with-mcp?tool=jetbrains). La connexion du plugin JetBrains à bip-kb reste à valider sur votre poste.
 
 ## 2. Vérifier la connexion
 
