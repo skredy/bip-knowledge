@@ -2,7 +2,7 @@
 
 Assistant local de connaissance technique : ingestion de documents et de code, mémoire sourcée, recherche, enquêtes avec Copilot CLI et dossiers de travail persistants. .NET 10, SQLite FTS5, Razor Pages, partage par Git et MCP en lecture seule.
 
-**Version 0.4.6.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
+**Version 0.4.7.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
 
 La 0.4.2 corrige le décodage des réponses et erreurs Copilot sous Windows : l'entrée et les deux sorties du processus utilisent explicitement UTF-8, indépendamment de la page de codes de la console. Le test de conservation des accents et caractères Unicode reste actif.
 
@@ -13,6 +13,8 @@ La **0.4.4** fournit à Copilot les intervalles exacts des unités visibles et l
 La **0.4.5** fournit des références courtes (`u143`, par exemple) pour les seules unités transmises à chaque appel guidé. Les assertions de contexte utilisent des références distinctes, et leurs preuves non fournies sont masquées. Une citation absente déclenche au plus une nouvelle analyse avec les données originales, sans réinjecter la conclusion refusée. Ce nouvel essai partage le plafond de deux réponses avec les erreurs de format/navigation/couverture. Aucune référence n'est devinée ni remplacée approximativement : si la réponse reste invalide, l'appel échoue. Les références complètes restent conservées dans la mémoire et les caches validés restent réutilisables.
 
 La **0.4.6** fait lire les outils MCP directement dans SQLite, sans charger `materialized.json` à chaque appel. Après la mise à jour d'une base existante, lancez une fois `bip-kb reindex --workspace "C:/Knowledge/ibip"`, puis redémarrez le serveur MCP dans votre IDE. Cette opération n'appelle pas Copilot et ne réingère pas les sources. Un index absent ou obsolète produit une erreur explicite ; le MCP ne le reconstruit pas pendant une requête. Les grandes listes de preuves sont paginées. Voir le [guide MCP](docs/mcp.md).
+
+La **0.4.7** ajoute `bip-kb cache compact` pour réduire le cache matérialisé sans perdre de données : les listes identiques sont stockées une seule fois, avec vérification intégrale avant remplacement. `--rebuild` permet de repartir de la mémoire publiée. Le compactage ne modifie ni les connaissances partagées, ni les décisions, ni l'index ; il n'appelle pas Copilot. Voir [la gestion du cache local](docs/cache.md).
 
 ## Installer ou mettre à jour
 
@@ -32,7 +34,7 @@ Sous Linux :
 dotnet restore --locked-mode
 dotnet test --no-restore
 dotnet pack src/BipKb -c Release --no-restore -o artifacts
-dotnet tool install BipKb --version 0.4.6 --add-source ./artifacts --tool-path ./artifacts/tools
+dotnet tool install BipKb --version 0.4.7 --add-source ./artifacts --tool-path ./artifacts/tools
 ```
 
 ### Si vous avez une base 0.1 ou 0.2

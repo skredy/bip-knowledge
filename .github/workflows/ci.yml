@@ -28,6 +28,9 @@ jobs:
       - name: Installed MCP stdio regression
         if: runner.os == 'Linux'
         run: python3 scripts/benchmark-mcp.py --count 200 --tool "$RUNNER_TEMP/bip-kb tools/bip-kb"
+      - name: Installed cache rebuild and compaction regression
+        if: runner.os == 'Linux'
+        run: python3 scripts/benchmark-cache.py --count 200 --rebuild --tool "$RUNNER_TEMP/bip-kb tools/bip-kb"
       - uses: actions/upload-artifact@v4
         with:
           name: bip-kb-${{ matrix.os }}

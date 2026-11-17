@@ -27,13 +27,12 @@ public sealed class MemoryStore(Workspace workspace)
         List<T> Read<T>(string kind)=>values.Where(p=>p.Key.StartsWith(kind+":",StringComparison.Ordinal)).OrderBy(p=>p.Key,StringComparer.Ordinal).Select(p=>p.Value.Deserialize<T>(Json.Options)!).ToList();
         return new(){Sources=Read<SourceVersion>("source"),Entities=Read<Entity>("entity"),Evidence=Read<Evidence>("evidence"),Claims=Read<Claim>("claim"),Reports=Read<IngestionReport>("report"),Projects=Read<ProjectProfile>("project"),Objects=Read<TechnicalObject>("object"),Relations=Read<KnowledgeRelation>("relation"),Tasks=Read<WorkTask>("task"),Questions=Read<OpenQuestion>("question")};
     }
-    public Knowledge Load(MemoryChange[]? resolutions=null)
+    public Knowledge Load(MemoryChange[]? resolutions=null,bool ignoreCache=false,bool writeCache=true)
     {
         var revision=Revision;var cache=Path.Combine(workspace.Local,"materialized.json");
-        if(resolutions==null&&File.Exists(cache))
+        if(resolutions==null&&!ignoreCache&&File.Exists(cache))
         {
-            // Stream large caches instead of allocating a second, UTF-16 copy of the whole JSON.
-            try{using var stream=File.OpenRead(cache);var cached=JsonSerializer.Deserialize<CachedMemory>(stream,Json.Options);if(cached?.Revision==revision)return cached.Knowledge;}catch(JsonException){ }
+            try{var cached=MaterializedCache.Read(cache);if(cached.Revision==revision)return cached.Knowledge;}catch(JsonException){ }
         }
         var changes=Files().Select(f=>{
             var c=Json.Read<ChangeSet>(File.ReadAllText(f));
@@ -72,7 +71,7 @@ public sealed class MemoryStore(Workspace workspace)
         var values=versions.Where(p=>p.Value[0].Value!=null).ToDictionary(p=>p.Key,p=>p.Value[0].Value!.Value);
         var k=Hydrate(values);Workspace.Validate(k);
         // Cache publication does not affect the shared commit graph. Competing readers use identical revisions.
-        if(resolutions==null)try{Json.Write(cache,new CachedMemory(revision,k));}catch(IOException){ }
+        if(resolutions==null&&writeCache)try{MaterializedCache.Write(cache,revision,k);}catch(IOException){ }
         return k;
     }
     public void Publish(Knowledge k)

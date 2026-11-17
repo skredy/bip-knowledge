@@ -4,6 +4,13 @@ public static class AtomicFile
 {
     // Rename within the same directory. Never delete/truncate the destination before replacement.
     public static void Write(string path,string content,Action<string,string>? replace=null,Action<TimeSpan>? delay=null)
+        =>WriteStream(path,stream=>
+        {
+            using var writer=new StreamWriter(stream,new System.Text.UTF8Encoding(false),leaveOpen:true);
+            writer.Write(content);
+        },replace:replace,delay:delay);
+
+    public static void WriteStream(string path,Action<Stream> write,Action<string>? validate=null,Action<string,string>? replace=null,Action<TimeSpan>? delay=null)
     {
         path=Path.GetFullPath(path);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -12,7 +19,8 @@ public static class AtomicFile
         delay??=Thread.Sleep;
         try
         {
-            File.WriteAllText(temp,content);
+            using(var stream=new FileStream(temp,FileMode.CreateNew,FileAccess.Write,FileShare.None))write(stream);
+            validate?.Invoke(temp);
             for(var attempt=0;;attempt++)
             {
                 try{replace(temp,path);break;}

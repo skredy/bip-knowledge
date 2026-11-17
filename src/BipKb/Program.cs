@@ -10,7 +10,7 @@ public static class Cli
     public static async Task<int> Run(string[] args)
     {
         if(args.Length==1 && args[0] is "--help" or "-h")args=["help"];
-        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.4.6");return 0;}
+        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.4.7");return 0;}
         using var cancel=new CancellationTokenSource();
         Console.CancelKeyPress+=(_,e)=>{e.Cancel=true;cancel.Cancel();};
         try
@@ -51,6 +51,8 @@ bip-kb — Mémoire technique sourcée
   review <claim-id> --action accept|reject|distinct|replace --reason <text> --actor <name>
   export --output <empty-directory> | import | reindex
       reindex rebuilds local search from published memory, without re-ingestion or Copilot.
+  cache compact [--rebuild]
+      losslessly compact the local memory cache; --rebuild ignores the old cache.
   doctor [--live] | serve [--port 5267] | mcp
 All commands: --workspace <directory>, --json. Quote multiword arguments.
 """); return 0;
@@ -86,6 +88,11 @@ All commands: --workspace <directory>, --json. Quote multiword arguments.
                 case "evaluate":result=Evaluation.Run(workspace,parsed.Get("file")??throw new ArgumentException("Provide --file."));break;
                 case "benchmark":result=Evaluation.Benchmark(int.Parse(parsed.Get("count")??"100000"));break;
                 case "init":workspace.Init();result=new{workspace=workspace.Root,status="initialized"};break;
+                case "cache":
+                    if(Required(1)!="compact")throw new ArgumentException("Use cache compact [--rebuild].");
+                    await using(var cacheProgress=new IngestionProgress(parsed.Has("json")?null:Console.Error,label:"cache"))
+                        result=MaterializedCache.Compact(workspace,parsed.Has("rebuild"),cacheProgress.Report,cancel.Token);
+                    break;
                 case "source":
                     if(Required(1)!="bind")throw new ArgumentException("Use source bind.");
                     workspace.Bind(Required(2),Required(3),role);result=new{source=Required(2),status="bound"};break;
@@ -164,7 +171,7 @@ public sealed class Arguments
     public List<string> Words {get;}=[];
     public Arguments(string[] args)
     {
-        string[] switches=["json","ingest","analyze","reanalyze","live","describe","non-interactive","dry-run","confirm","history"];string[] values=["workspace","file","path","image","schema","source","role","output","port","action","reason","actor","context-file","project","domain","task","message","name","count","intent","analysis-mode","max-calls"];
+        string[] switches=["json","ingest","analyze","reanalyze","live","describe","non-interactive","dry-run","confirm","history","rebuild"];string[] values=["workspace","file","path","image","schema","source","role","output","port","action","reason","actor","context-file","project","domain","task","message","name","count","intent","analysis-mode","max-calls"];
         for(var i=0;i<args.Length;i++)
         {
             if(!args[i].StartsWith("--")){Words.Add(args[i]);continue;}

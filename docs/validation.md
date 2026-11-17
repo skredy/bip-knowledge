@@ -360,3 +360,19 @@ Le générateur crée uniquement des données synthétiques : 22 000 objets, 22 
 La réindexation du corpus synthétique a pris 7,752 s. Les contenus de contexte sont bornés et peuvent différer dans leurs aperçus ; les preuves canoniques restent accessibles par les outils de lecture. Ces mesures ne prédisent pas les temps sur un poste Windows professionnel, OneDrive ou un corpus différent.
 
 Validation finale : **251 tests réussis, cinq ignorés**, compilation sans avertissement, script PowerShell complet et mise à jour effective du paquet 0.4.5 vers 0.4.6. Le paquet installé passe les parcours terminal et guidé CLI/web, ainsi qu'un test MCP stdio sur 200 objets. Le test MCP du paquet installé est ajouté à la CI Linux. Le plugin JetBrains/VS Code et les appels Copilot authentifiés ne sont pas validés dans cet environnement ; les tests d'ingestion utilisent un adaptateur simulé.
+
+## Version 0.4.7 — compactage sans perte du cache local
+
+Les tests couvrent l'ancien cache et le format compact, l'égalité de toutes les connaissances avant/après, les listes réordonnées ou avec répétitions, les listes vides, les caractères Unicode et les valeurs nulles. Une modification d'un tableau restitué ne doit pas modifier celui d'un autre objet. Les anciennes versions et décisions sont conservées ; les fichiers partagés et la révision de recherche restent inchangés.
+
+Les tests vérifient également les références de cache invalides, la reconstruction depuis les lots publiés, le refus d'un lot corrompu, l'annulation et la publication concurrente avant remplacement, ainsi que l'échec de validation du fichier temporaire. Le fichier précédent est conservé sur ces échecs. Les régressions de remplacement atomique et d'écriture UTF-8 sans BOM restent actives.
+
+Benchmark reproductible :
+
+```bash
+python3 scripts/benchmark-cache.py --count 22000 --dotnet dotnet
+```
+
+Le même corpus synthétique de 22 000 objets et 21 890 relations passe de **709 512 544 à 18 631 171 octets** de cache, soit **97,37 % de réduction**. Le compactage stocke 110 listes distinctes, sans retirer leurs utilisations. L'exécution mesurée, comprenant la commande et le contrôle indépendant des fichiers partagés, prend **10,851 s sous Linux**. Le résultat indique `verified: true`, la comparaison des fichiers partagés est identique et une seconde exécution conserve exactement la même taille. Ces chiffres ne garantissent pas le même gain sur un autre corpus.
+
+Validation : **264 tests réussis, cinq ignorés**, compilation sans avertissement et mise à jour effective 0.4.6 → 0.4.7 via le script PowerShell complet. La reconstruction/compaction du paquet installé est vérifiée sur 200 objets avec `--rebuild` ; les parcours CLI terminal et guidé vérifient aussi l'ingestion, la reprise et l'export/import avec le nouveau cache. La CI Linux exécute le test de compactage du paquet installé. Aucune connaissance professionnelle n'a été utilisée ; Copilot est simulé pour les parcours d'ingestion et Windows reste à valider sur son exécuteur.

@@ -82,7 +82,7 @@ public static class Mcp
                 id=rawId.Clone();var method=message.GetProperty("method").GetString();object result;
                 switch(method)
                 {
-                    case "initialize":result=new{protocolVersion="2024-11-05",capabilities=new{tools=new{}},serverInfo=new{name="bip-kb",version="0.4.6"}};break;
+                    case "initialize":result=new{protocolVersion="2024-11-05",capabilities=new{tools=new{}},serverInfo=new{name="bip-kb",version="0.4.7"}};break;
                     case "ping":result=new{};break;
                     case "tools/list":result=new{tools=Descriptions.Select(pair=>
                     {

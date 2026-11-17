@@ -16,6 +16,8 @@ Adaptez le chemin à votre base. Attendez la fin, puis redémarrez le serveur MC
 
 Les outils MCP lisent ensuite uniquement les données demandées dans SQLite. Ils ne chargent plus les centaines de Mo de `materialized.json`. Ne supprimez pas ce fichier ou `db-wal` pour résoudre une expiration MCP : cela ne remplace pas la préparation de l'index.
 
+Depuis la 0.4.7, `bip-kb cache compact --workspace "C:/Knowledge/ibip"` permet aussi de réduire ce cache sans perte de connaissances. C'est une opération distincte de `reindex` : elle ne remplace pas un index absent ou obsolète. Voir [la gestion du cache](cache.md).
+
 Une ingestion terminée prépare désormais cet index aussi après une analyse guidée. Si la mémoire ou les décisions changent ensuite sans actualisation de l'index (par exemple après un arbitrage ou une fusion Git), le MCP demande un `reindex` au lieu de servir silencieusement un ancien état ou de reconstruire la base pendant l'appel. Après une fusion Git, `bip-kb import` valide et reconstruit aussi l'index.
 
 ## 1. Connecter votre base dans VS Code
