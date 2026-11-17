@@ -241,8 +241,10 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
             workspace.Save(k);
             publishedRevision=workspace.SemanticRevision;
         }
-        // The index is disposable. A process interruption here is repaired by search/import.
-        if(!analyze){progress?.Invoke("Construction de l'index de recherche local");new SearchEngine(workspace).Refresh(supplied:k,progress:progress,ct:ct,suppliedRevision:publishedRevision);}
+        // Publish the read projection before reporting completion, including guided/model analysis.
+        // An interrupted rebuild can be resumed with reindex without repeating Copilot calls.
+        progress?.Invoke("Construction de l'index de recherche local");
+        new SearchEngine(workspace).Refresh(supplied:k,progress:progress,ct:ct,suppliedRevision:publishedRevision);
         progress?.Invoke($"Ingestion terminée : {files.Count} fichier(s), dont {unchanged} inchangé(s)");
         return report;
     }

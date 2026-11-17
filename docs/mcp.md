@@ -4,6 +4,20 @@ Le MCP permet à Copilot de consulter votre base bip-kb pendant que vous travail
 
 Le serveur consulte la dernière révision publiée de la base. Il ne lance pas d'ingestion, d'analyse Copilot supplémentaire ou d'arbitrage. L'indexation locale rend les extraits recherchables ; `--analyze` ajoute une compréhension proposée par Copilot, avec preuves et couverture. Une ingestion encore en cours n'est pas visible comme une révision terminée.
 
+## Préparer l'index après la mise à jour vers 0.4.6
+
+Sur une base existante, lancez une fois depuis un terminal :
+
+```powershell
+bip-kb reindex --workspace "C:/Knowledge/ibip"
+```
+
+Adaptez le chemin à votre base. Attendez la fin, puis redémarrez le serveur MCP dans votre IDE. L'opération reconstruit l'index local à partir de la mémoire publiée ; elle n'appelle pas Copilot et ne nécessite ni réingestion ni `--reanalyze`. Elle peut prendre du temps sur une grosse base, avec une progression affichée.
+
+Les outils MCP lisent ensuite uniquement les données demandées dans SQLite. Ils ne chargent plus les centaines de Mo de `materialized.json`. Ne supprimez pas ce fichier ou `db-wal` pour résoudre une expiration MCP : cela ne remplace pas la préparation de l'index.
+
+Une ingestion terminée prépare désormais cet index aussi après une analyse guidée. Si la mémoire ou les décisions changent ensuite sans actualisation de l'index (par exemple après un arbitrage ou une fusion Git), le MCP demande un `reindex` au lieu de servir silencieusement un ancien état ou de reconstruire la base pendant l'appel. Après une fusion Git, `bip-kb import` valide et reconstruit aussi l'index.
+
 ## 1. Connecter votre base dans VS Code
 
 Prérequis : bip-kb installé, une base existante contenant vos sources, et un client Copilot autorisé à utiliser MCP.
@@ -107,6 +121,7 @@ consulter les outils du serveur MCP bip-kb.
 - Lire le contexte du projet, puis rechercher les concepts et symboles concernés.
 - Approfondir les résultats utiles avec leurs preuves et relations.
 - Réutiliser exactement les identifiants retournés par les outils ; ne pas les abréger.
+- Si une liste pertinente indique nextOffset, poursuivre avec cet offset ; un aperçu de preuves n'est pas la liste complète.
 - Distinguer legacy, cible, implémentation actuelle, décisions humaines et hypothèses.
 - Consulter la couverture d'analyse des sources importantes et les questions restantes.
 - Citer les sources avec fichier et emplacement lorsqu'ils sont disponibles.
@@ -126,13 +141,25 @@ Ces consignes orientent l'assistant ; vérifiez les appels d'outils et les citat
 | `context` | `query`, `project` facultatif | Dossier Markdown sourcé et synthèses pertinentes |
 | `project` | `id` : nom ou identifiant du projet | Profil, aperçu des domaines et questions ouvertes |
 | `entity` | `id` : identifiant d'entité ou d'objet technique | Élément et assertions associées |
-| `evidence` | `id` : identifiant de preuve ou d'assertion | Preuve précise ou preuves de l'assertion |
+| `evidence` | `id` : identifiant de preuve, assertion, objet, relation ou question | Preuve précise ou page des preuves associées |
 | `relations` | `id` : identifiant d'objet, d'entité ou d'assertion | Relations, assertions liées et décisions applicables |
 | `analysis` | `id` : identifiant de source ; `project` facultatif | Plans, synthèses et couverture publiés de cette source |
 | `questions` | `id` : nom exact du projet | Questions enregistrées, avec leur réponse éventuelle |
 | `task` | `id` : identifiant d'un dossier enregistré | Dossier de travail existant |
 
 Les identifiants ne sont pas interchangeables : pour `analysis`, utilisez l'identifiant logique de la source, pas le nom du fichier XLSX. Pour les preuves et assertions, reprenez les identifiants complets des résultats. Le serveur n'expose pas de liste générale des projets ou sources : indiquez ceux que vous avez configurés et utilisez leurs références dans les résultats.
+
+## Pagination et limites des réponses
+
+`search` et `context` acceptent `limit` (20 par défaut, de 1 à 50). Les outils `entity`, `evidence`, `relations`, `project`, `questions` et `analysis` acceptent également `offset` (0 par défaut). `task` lit un dossier par son identifiant.
+
+Les collections paginées indiquent `items`, `total`, `offset` et `nextOffset`. Pour continuer, répétez l'appel avec le même identifiant et `offset` égal à `nextOffset`. `null` signifie que cette collection est terminée. Pour `analysis`, la liste reste nommée `sources` et le total `sourceCount`.
+
+Les assertions, relations et questions sont présentées avec `record` et `proofs`. Les `evidenceIds` du record correspondent à l'aperçu de preuves fourni ; `proofs.total` indique combien il y en a réellement. Pour toutes les consulter, appelez `evidence` avec l'identifiant du record et suivez la pagination. `evidence` accepte aussi les identifiants d'objets techniques et de relations. Les identifiants canoniques complets sont conservés ; un aperçu ne représente pas une suppression des autres preuves.
+
+`relations` expose l'historique paginé des décisions : consultez `supersedes` pour identifier celles qui ont été remplacées. Plusieurs décisions concurrentes peuvent nécessiter un arbitrage. Les états de recherche restent calculés lors de l'indexation à partir des décisions effectives.
+
+Les réponses MCP sont bornées à 262 144 caractères ; une réponse dépassant cette limite produit une erreur demandant de préciser la recherche ou de réduire `limit`, sans en accepter une version silencieusement incomplète. Les lectures SQL sont interrompues après 15 secondes ; une base occupée ou un index manquant renvoie un diagnostic. `initialize`, `ping` et la découverte des outils ne lisent pas la mémoire.
 
 ## Dépannage
 
@@ -141,6 +168,7 @@ Les identifiants ne sont pas interchangeables : pour `analysis`, utilisez l'iden
 | Le serveur ne démarre pas | Vérifier le chemin absolu de `bip-kb.exe`, son exécution avec `--version`, et les journaux du serveur dans VS Code. |
 | Le serveur ne trouve pas la base | Vérifier `--workspace` : il doit pointer sur la base déjà initialisée. |
 | Copilot ne consulte pas bip-kb | Activer les outils du serveur, utiliser le mode Agent et demander explicitement un appel à `search`. Vérifier aussi la disponibilité de MCP dans votre configuration d'entreprise. |
+| Le MCP indique un index absent, ancien ou obsolète | Exécuter `bip-kb reindex --workspace "C:/Knowledge/ibip"`, attendre la fin, puis réessayer. |
 | Une source récente n'apparaît pas | Vérifier que son ingestion a terminé et publié sa révision dans le même workspace. |
 | `analysis` ne renvoie rien | Vérifier l'identifiant de source et l'existence d'une exploration guidée publiée. Une simple indexation locale ne produit pas cette synthèse. |
 | Les recherches sont trop larges | Préciser les symboles et le projet ; effectuer plusieurs recherches ciblées. |

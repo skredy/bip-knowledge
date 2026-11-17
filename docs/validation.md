@@ -333,3 +333,30 @@ La capture utilisateur montre deux références complètes et une référence de
 Les tests couvrent les références d'unité/ assertion distinctes, les identifiants tronqués, les différences de casse et espaces, une unité d'un échange précédent devenue invisible, la stabilité des références d'assertions, la conservation de la demande originale, l'absence de réinjection d'une conclusion rejetée, l'annulation et le plafond commun de deux réponses. Le parcours par processus Node vérifie deux refus successifs, la reprise du travail conservé puis une nouvelle analyse réussie, avec uniquement des preuves canoniques dans la mémoire. Les observations visuelles non étayées restent refusées.
 
 Validation Linux : **237 tests réussis, cinq ignorés**. Le script PowerShell complet (restauration verrouillée, compilation sans avertissement, tests, paquet et installation) a mis à jour le véritable outil 0.4.4 vers 0.4.5 ; le test supplémentaire du préfixe tronqué a ensuite été validé avec toute la suite. Le parcours guidé CLI/web du paquet installé passe pour XLS, XLSX, Draw.io, PNG et SQL, avec réingestion inchangée et export/import. Copilot est simulé ; le corpus professionnel, le modèle réel et Windows restent à valider dans leur environnement.
+
+## Version 0.4.6 — MCP indépendant du gros cache matérialisé
+
+Le serveur chargeait toute la mémoire avant chaque appel, y compris `search`, puis `context` la chargeait à nouveau. La sélection de preuves utilisait aussi une boucle sur les preuves et assertions. Les outils utilisent maintenant uniquement l'index de recherche et une projection de lecture SQLite publiée dans la même transaction. Une préparation manquante renvoie une erreur demandant `reindex`, sans reconstruction dans la requête.
+
+Les nouvelles régressions vérifient les neuf outils avec `materialized.json` verrouillé et les objets de mémoire partagée déplacés hors de leur emplacement ; les réponses doivent rester correctes sans modifier l'index. Elles couvrent aussi la pagination d'un ensemble de 1 000 preuves, la déduplication des ensembles, l'invalidation après publication et décision humaine, l'ancien index v6 sans projection MCP, les limites d'arguments et de réponse, l'interruption d'une requête SQL, la négociation sans base et l'annulation de construction de la projection avec restauration de l'ancien index.
+
+Benchmark reproductible :
+
+```bash
+python3 scripts/benchmark-mcp.py --count 22000 --dotnet dotnet \
+  --baseline-tool /chemin/vers/bip-kb-0.4.5
+```
+
+Le générateur crée uniquement des données synthétiques : 22 000 objets, 22 000 preuves, 21 890 relations et 4,4 millions de liens logiques objet/preuve. Le fichier `materialized.json` mesure **709 512 544 octets**. Les deux versions utilisent le même workspace et un index déjà préparé ; « premier appel » désigne un nouveau processus MCP, pas un disque dont les caches système sont froids. Les appels passent par de vrais processus .NET et le transport stdio ; aucun modèle Copilot n'intervient.
+
+| Mesure Linux | 0.4.5 installée | Correctif 0.4.6 |
+|---|---:|---:|
+| Recherche, premier appel | 3,516 s | 0,107 s |
+| Recherche suivante | 2,443 s | 0,027 s |
+| Contexte sourcé | 19,782 s | 0,042 s |
+| Consultation de preuve | 5,299 s | 0,004 s |
+| Pic RSS du processus MCP (`VmHWM`) | 12 092 460 Kio | 65 452 Kio |
+
+La réindexation du corpus synthétique a pris 7,752 s. Les contenus de contexte sont bornés et peuvent différer dans leurs aperçus ; les preuves canoniques restent accessibles par les outils de lecture. Ces mesures ne prédisent pas les temps sur un poste Windows professionnel, OneDrive ou un corpus différent.
+
+Validation finale : **251 tests réussis, cinq ignorés**, compilation sans avertissement, script PowerShell complet et mise à jour effective du paquet 0.4.5 vers 0.4.6. Le paquet installé passe les parcours terminal et guidé CLI/web, ainsi qu'un test MCP stdio sur 200 objets. Le test MCP du paquet installé est ajouté à la CI Linux. Le plugin JetBrains/VS Code et les appels Copilot authentifiés ne sont pas validés dans cet environnement ; les tests d'ingestion utilisent un adaptateur simulé.

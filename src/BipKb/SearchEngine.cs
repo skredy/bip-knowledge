@@ -27,7 +27,7 @@ public sealed class SearchEngine(Workspace workspace)
         using var db=Open();using var cmd=db.CreateCommand();
         using var interrupt=ct.Register(()=>SQLitePCL.raw.sqlite3_interrupt(db.Handle));
         cmd.CommandText="PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-65536; CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT); CREATE TABLE IF NOT EXISTS docs(id TEXT PRIMARY KEY,hash TEXT,kind TEXT,project TEXT,domain TEXT,role TEXT,historical INTEGER,state TEXT,body TEXT,title TEXT); CREATE INDEX IF NOT EXISTS doc_title ON docs(title COLLATE NOCASE); CREATE INDEX IF NOT EXISTS doc_scope ON docs(project,domain); CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(id UNINDEXED,title,text,tokenize='unicode61 remove_diacritics 2'); CREATE TABLE IF NOT EXISTS edges(src TEXT,dst TEXT,kind TEXT,PRIMARY KEY(src,dst,kind)); CREATE INDEX IF NOT EXISTS incoming ON edges(dst); CREATE TABLE IF NOT EXISTS proof_members(set_id TEXT,proof_id TEXT,PRIMARY KEY(set_id,proof_id)); CREATE INDEX IF NOT EXISTS proof_incoming ON proof_members(proof_id); CREATE TABLE IF NOT EXISTS node_proofs(node_id TEXT PRIMARY KEY,set_id TEXT); CREATE INDEX IF NOT EXISTS proof_nodes ON node_proofs(set_id); CREATE TABLE IF NOT EXISTS profiles(id TEXT PRIMARY KEY,name TEXT,body TEXT);";cmd.ExecuteNonQuery();
-        cmd.CommandText="SELECT value FROM meta WHERE key='revision'";
+        cmd.CommandText="SELECT value FROM meta WHERE key='revision' AND EXISTS(SELECT 1 FROM meta WHERE key='mcp-schema' AND value='"+McpIndex.Version+"')";
         if(!force&&(string?)cmd.ExecuteScalar()==revision){progress?.Invoke("Index local déjà à jour");return;}
         using var gate=new FileStream(Path.Combine(workspace.Local,"search.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
         progress?.Invoke(supplied==null?"Index local — chargement de la mémoire publiée":"Index local — utilisation de la mémoire déjà chargée");
@@ -142,6 +142,7 @@ public sealed class SearchEngine(Workspace workspace)
         foreach(var r in k.Relations.Where(r=>r.State!=KnowledgeState.Rejected&&!distinct.Contains(r.From)&&r.EvidenceIds.Any(activeEvidence.Contains)))Edge(r.From,r.To,r.Kind.ToString());
         using var profile=Prepared("INSERT INTO profiles VALUES($id,$name,$body)","$id","$name","$body");
         foreach(var p in k.Projects){ct.ThrowIfCancellationRequested();profile.Parameters["$id"].Value=p.Id;profile.Parameters["$name"].Value=p.Name;profile.Parameters["$body"].Value=Json.Serialize(p);profile.ExecuteNonQuery();}
+        McpIndex.Build(db,tx,k,decisions,progress,ct);
         ct.ThrowIfCancellationRequested();
         if(workspace.SemanticRevision!=revision)throw new RevisionConflictException("La mémoire a changé pendant l'indexation ; relancez reindex. L'ancien index reste intact.");
         progress?.Invoke($"Index local — validation : {docs.Count} documents, {links} relations, {memberships} références partagées");
@@ -158,10 +159,16 @@ public sealed class SearchEngine(Workspace workspace)
         // Small, explicit inflection expansion; this is lexical retrieval, not semantic equivalence.
         return words.SelectMany(t=>new[]{t,t.Length>4&&t.EndsWith('s')?t[..^1]:t}).SelectMany(t=>new[]{t,t.Length>5&&t.EndsWith("ee")?t[..^1]:t}).Distinct().Take(48).ToArray();
     }
-    public SearchResponse Search(SearchQuery query)
+    public SearchResponse Search(SearchQuery query,bool readOnly=false,CancellationToken ct=default)
     {
         if(query.Text.Length>4000||query.Limit is <1 or >100||query.Depth is <0 or >3)throw new ArgumentException("Search limits: 4000 characters, 1..100 results, graph depth 0..3.");
-        var timer=Stopwatch.StartNew();Refresh();using var db=Open();using var transaction=db.BeginTransaction();using var cmd=db.CreateCommand();cmd.Transaction=transaction;
+        ct.ThrowIfCancellationRequested();var timer=Stopwatch.StartNew();
+        if(!readOnly)Refresh(ct:ct);
+        using var snapshot=readOnly?new McpIndex(workspace,ct,requireRecords:false):null;
+        using var ownedDb=readOnly?null:Open();var db=snapshot?.Db??ownedDb!;
+        using var ownedTransaction=readOnly?null:db.BeginTransaction();var transaction=snapshot?.Transaction??ownedTransaction!;
+        using var interrupt=ct.Register(()=>SQLitePCL.raw.sqlite3_interrupt(db.Handle));
+        using var cmd=db.CreateCommand();cmd.Transaction=transaction;
         cmd.CommandText="SELECT body FROM profiles";var profiles=new List<ProjectProfile>();using(var r=cmd.ExecuteReader()){while(r.Read())profiles.Add(Json.Read<ProjectProfile>(r.GetString(0)));}
         var profile=query.Project==null?(profiles.Count==1?profiles[0]:null):profiles.SingleOrDefault(p=>p.Id==query.Project||p.Name.Equals(query.Project,StringComparison.OrdinalIgnoreCase));
         var project=profile?.Name??query.Project;

@@ -10,7 +10,7 @@ public static class Cli
     public static async Task<int> Run(string[] args)
     {
         if(args.Length==1 && args[0] is "--help" or "-h")args=["help"];
-        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.4.5");return 0;}
+        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.4.6");return 0;}
         using var cancel=new CancellationTokenSource();
         Console.CancelKeyPress+=(_,e)=>{e.Cancel=true;cancel.Cancel();};
         try
@@ -129,7 +129,9 @@ All commands: --workspace <directory>, --json. Quote multiword arguments.
                     result=parsed.Words.Count==1?workspace.Review(workspace.Load()).Select(c=>service.Detail(c.Id)).ToArray():workspace.Decide(Required(1),parsed.Get("action")??"",parsed.Get("reason")??"",parsed.Get("actor")??"");break;
                 case "import":service.Import();result=new{status="validated and indexed",decisionConflicts=workspace.Load().Claims.Count(c=>Workspace.Conflict(workspace.Decisions(),c.Id))};break;
                 case "export":service.Export(parsed.Get("output")??throw new ArgumentException("Provide --output."));result=new{status="exported"};break;
-                case "mcp":await Mcp.Run(workspace,Console.In,Console.Out,cancel.Token);return 0;
+                case "mcp":
+                    Console.InputEncoding=new System.Text.UTF8Encoding(false);Console.OutputEncoding=new System.Text.UTF8Encoding(false);
+                    await Mcp.Run(workspace,Console.In,Console.Out,cancel.Token);return 0;
                 case "serve":
                     var port=int.Parse(parsed.Get("port")??"5267");if(port is <1024 or >65535)throw new ArgumentException("Port must be 1024..65535.");
                     _=workspace.Load();

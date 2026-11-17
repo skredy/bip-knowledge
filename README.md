@@ -2,7 +2,7 @@
 
 Assistant local de connaissance technique : ingestion de documents et de code, mémoire sourcée, recherche, enquêtes avec Copilot CLI et dossiers de travail persistants. .NET 10, SQLite FTS5, Razor Pages, partage par Git et MCP en lecture seule.
 
-**Version 0.4.5.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
+**Version 0.4.6.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
 
 La 0.4.2 corrige le décodage des réponses et erreurs Copilot sous Windows : l'entrée et les deux sorties du processus utilisent explicitement UTF-8, indépendamment de la page de codes de la console. Le test de conservation des accents et caractères Unicode reste actif.
 
@@ -11,6 +11,8 @@ La **0.4.3** évite de rejeter une réponse lorsque Copilot demande plus de 200 
 La **0.4.4** fournit à Copilot les intervalles exacts des unités visibles et lui permet de déclarer explicitement leur examen avec `reviewVisible`. Cette déclaration s'applique uniquement aux unités effectivement transmises, sans inclure les lignes vides omises ni les unités encore à lire. Une plage de couverture citant une unité absente ou déjà déclarée reçoit un diagnostic précis et une seule nouvelle tentative, dans le même budget que les corrections de navigation/format. Aucune couverture refusée n'est acceptée automatiquement. La progression distingue le chargement de la mémoire locale et la raison d'une nouvelle analyse (reprise, contenu ou contexte modifié, réanalyse demandée).
 
 La **0.4.5** fournit des références courtes (`u143`, par exemple) pour les seules unités transmises à chaque appel guidé. Les assertions de contexte utilisent des références distinctes, et leurs preuves non fournies sont masquées. Une citation absente déclenche au plus une nouvelle analyse avec les données originales, sans réinjecter la conclusion refusée. Ce nouvel essai partage le plafond de deux réponses avec les erreurs de format/navigation/couverture. Aucune référence n'est devinée ni remplacée approximativement : si la réponse reste invalide, l'appel échoue. Les références complètes restent conservées dans la mémoire et les caches validés restent réutilisables.
+
+La **0.4.6** fait lire les outils MCP directement dans SQLite, sans charger `materialized.json` à chaque appel. Après la mise à jour d'une base existante, lancez une fois `bip-kb reindex --workspace "C:/Knowledge/ibip"`, puis redémarrez le serveur MCP dans votre IDE. Cette opération n'appelle pas Copilot et ne réingère pas les sources. Un index absent ou obsolète produit une erreur explicite ; le MCP ne le reconstruit pas pendant une requête. Les grandes listes de preuves sont paginées. Voir le [guide MCP](docs/mcp.md).
 
 ## Installer ou mettre à jour
 
@@ -30,7 +32,7 @@ Sous Linux :
 dotnet restore --locked-mode
 dotnet test --no-restore
 dotnet pack src/BipKb -c Release --no-restore -o artifacts
-dotnet tool install BipKb --version 0.4.5 --add-source ./artifacts --tool-path ./artifacts/tools
+dotnet tool install BipKb --version 0.4.6 --add-source ./artifacts --tool-path ./artifacts/tools
 ```
 
 ### Si vous avez une base 0.1 ou 0.2
@@ -143,7 +145,7 @@ Limites par format : Excel conserve les valeurs stockées et coordonnées, sans 
 
 ### Construction de l'index local trop longue
 
-La 0.3.10 conserve chaque ensemble identique de preuves une seule fois dans SQLite, avec des liens depuis les objets techniques. Cela évite de matérialiser à nouveau chaque paire objet/preuve quand des centaines d'objets référencent toutes les unités d'un fichier. La mémoire partagée et ses références complètes sont conservées. Les résultats de recherche présentent au maximum 32 références par objet en indiquant quand il y en a davantage ; le graphe complet reste navigable dans les deux sens, et l'opération MCP `entity` conserve toutes les références de l'objet technique.
+La 0.3.10 conserve chaque ensemble identique de preuves une seule fois dans SQLite, avec des liens depuis les objets techniques. Cela évite de matérialiser à nouveau chaque paire objet/preuve quand des centaines d'objets référencent toutes les unités d'un fichier. La mémoire partagée et ses références complètes sont conservées. Les résultats de recherche présentent au maximum 32 références par objet en indiquant quand il y en a davantage ; le graphe complet reste navigable dans les deux sens, et le MCP permet de consulter toutes les références de l'objet technique par pages avec `entity` et `evidence`.
 
 Si une ingestion a atteint « Construction de l'index de recherche local », la mémoire a déjà été publiée. Après arrêt de l'ancien processus et mise à jour, reconstruire uniquement l'index depuis le workspace :
 

@@ -32,7 +32,8 @@ public sealed class MemoryStore(Workspace workspace)
         var revision=Revision;var cache=Path.Combine(workspace.Local,"materialized.json");
         if(resolutions==null&&File.Exists(cache))
         {
-            try{var cached=Json.Read<CachedMemory>(File.ReadAllText(cache));if(cached.Revision==revision)return cached.Knowledge;}catch(JsonException){ }
+            // Stream large caches instead of allocating a second, UTF-16 copy of the whole JSON.
+            try{using var stream=File.OpenRead(cache);var cached=JsonSerializer.Deserialize<CachedMemory>(stream,Json.Options);if(cached?.Revision==revision)return cached.Knowledge;}catch(JsonException){ }
         }
         var changes=Files().Select(f=>{
             var c=Json.Read<ChangeSet>(File.ReadAllText(f));

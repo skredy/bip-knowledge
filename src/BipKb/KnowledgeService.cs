@@ -57,7 +57,18 @@ public sealed class KnowledgeService(Workspace workspace)
 }
 public static class Mcp
 {
-    private static readonly string[] Names=["search","entity","evidence","relations","context","project","task","questions","analysis"];
+    private static readonly Dictionary<string,string> Descriptions=new()
+    {
+        ["search"]="Search indexed evidence and knowledge. Filter by project when several exist. Never runs ingestion or rebuilds.",
+        ["context"]="Prepare a bounded cited development context from indexed knowledge. Refine query for more detail.",
+        ["entity"]="Read an entity or technical object, plus paged claims and proof IDs. Continue with offset/limit.",
+        ["evidence"]="Read evidence by proof ID, or page proofs of a claim, object, relation or question ID. Uses canonical IDs.",
+        ["relations"]="Read paged relations, related claims and decision history. Check supersedes before treating decisions as effective.",
+        ["project"]="Read a project by name or ID, conventions, paged claims and open questions.",
+        ["task"]="Read an existing work dossier by task ID; does not run an investigation.",
+        ["questions"]="Read paged recorded questions and answers by exact project name.",
+        ["analysis"]="Read published exploration plans and coverage by source ID, not filename. Interpretations, not evidence. Page sources with offset/limit."
+    };
     public static async Task Run(Workspace workspace,TextReader input,TextWriter output,CancellationToken ct)
     {
         string? line;
@@ -68,42 +79,56 @@ public static class Mcp
             {
                 using var doc=JsonDocument.Parse(line);var message=doc.RootElement;
                 if(!message.TryGetProperty("id",out var rawId))continue;
-                id=rawId.Clone(); var method=message.GetProperty("method").GetString(); object result;
+                id=rawId.Clone();var method=message.GetProperty("method").GetString();object result;
                 switch(method)
                 {
-                    case "initialize": result=new{protocolVersion="2024-11-05",capabilities=new{tools=new{}},serverInfo=new{name="bip-kb",version="0.4.5"}};break;
-                    case "ping": result=new{};break;
-                    case "tools/list": result=new{tools=Names.Select(n=>new{name=n,description=n switch{"search"=>"Find evidence-backed claims","entity"=>"Read an entity and its claims","evidence"=>"Read claim evidence","relations"=>"Read related claims and decisions","analysis"=>"Read published exploration plans and coverage for a source id; interpretations, not documentary evidence",_=>"Prepare a cited development context"},annotations=new{readOnlyHint=true,destructiveHint=false},inputSchema=new{type="object",properties=new Dictionary<string,object>{{n is "search" or "context"?"query":"id",new{type="string"}},{"project",new{type="string"}}},required=new[]{n is "search" or "context"?"query":"id"},additionalProperties=false}})};break;
+                    case "initialize":result=new{protocolVersion="2024-11-05",capabilities=new{tools=new{}},serverInfo=new{name="bip-kb",version="0.4.6"}};break;
+                    case "ping":result=new{};break;
+                    case "tools/list":result=new{tools=Descriptions.Select(pair=>
+                    {
+                        var query=pair.Key is "search" or "context";var paged=pair.Key is "entity" or "evidence" or "relations" or "project" or "questions" or "analysis";
+                        var properties=new Dictionary<string,object>{{query?"query":"id",new{type="string"}}};
+                        if(query||pair.Key=="analysis")properties["project"]=new{type="string"};
+                        if(query||paged)properties["limit"]=new{type="integer",minimum=1,maximum=50,@default=20};
+                        if(paged)properties["offset"]=new{type="integer",minimum=0,maximum=1000000,@default=0};
+                        return new{name=pair.Key,description=pair.Value,annotations=new{readOnlyHint=true,destructiveHint=false},inputSchema=new{type="object",properties,required=new[]{query?"query":"id"},additionalProperties=false}};
+                    })};break;
                     case "tools/call":
-                        var p=message.GetProperty("params"); var name=p.GetProperty("name").GetString()!;
-                        if(!Names.Contains(name))throw new ArgumentException("Unknown read-only tool.");
+                        var p=message.GetProperty("params");var name=p.GetProperty("name").GetString()!;
+                        if(!Descriptions.ContainsKey(name))throw new ArgumentException("Unknown read-only tool.");
                         var args=p.GetProperty("arguments");var key=name is "search" or "context"?"query":"id";
                         var value=args.GetProperty(key).GetString()??throw new ArgumentException("Missing argument.");
-                        if(value.Length>10000||args.EnumerateObject().Any(a=>a.Name!=key&&a.Name!="project"))throw new ArgumentException("Invalid arguments.");
-                        var project=args.TryGetProperty("project",out var projectValue)?projectValue.GetString():null;
-                        var k=workspace.Load(); var service=new KnowledgeService(workspace);
-                        object content=name switch {
-                            "search"=>new SearchEngine(workspace).Search(new(value,project)),"context"=>service.Context(value,project),
-                            "project"=>new Projects(workspace).Summary(value),
-                            "task"=>k.Tasks.SingleOrDefault(t=>t.Id==value)??throw new ArgumentException("Unknown task."),
-                            "questions"=>k.Questions.Where(q=>q.Project==value),
-                            "analysis"=>new{sources=k.Sources.Where(s=>s.Active&&s.SourceId==value&&s.Exploration!=null&&(project==null||s.Context?.Project==project)).Select(s=>new{s.RelativePath,s.Analyzed,
-                                s.Exploration!.Protocol,s.Exploration.Plan,s.Exploration.Summary,s.Exploration.TotalUnits,s.Exploration.AnalyzedUnits,s.Exploration.ExcludedUnits,s.Exploration.UnresolvedUnits,s.Exploration.EmptyUnits,s.Exploration.VisualStatus,
-                                coverage=s.Exploration.Coverage.Take(100),coverageTruncated=s.Exploration.Coverage.Length>100,questions=s.Exploration.Questions.Take(8)}).Take(20),
-                                sourceCount=k.Sources.Count(s=>s.Active&&s.SourceId==value&&s.Exploration!=null&&(project==null||s.Context?.Project==project))},
-                            "entity"=>new{entity=k.Entities.SingleOrDefault(e=>e.Id==value),technicalObject=k.Objects.SingleOrDefault(o=>o.Id==value),claims=k.Claims.Where(c=>c.EntityId==value)},
-                            "relations"=>new{relations=k.Relations.Where(r=>r.From==value||r.To==value),claims=k.Claims.Where(c=>c.Id==value||c.RelatedClaimIds.Contains(value)),decisions=Workspace.Effective(workspace.Decisions(),value)},
-                            "evidence"=>k.Evidence.Where(e=>e.Id==value||k.Claims.Any(c=>c.Id==value&&c.EvidenceIds.Contains(e.Id))),
-                            _=>service.Detail(value)};
-                        result=new{content=new[]{new{type="text",text=content is string s?s:Json.Serialize(content)}},isError=false};break;
-                    default:
-                        await Write(new{jsonrpc="2.0",id,error=new{code=-32601,message="Method not found"}});continue;
+                        var queryTool=name is "search" or "context";var pagedTool=name is "entity" or "evidence" or "relations" or "project" or "questions" or "analysis";
+                        if(value.Length>4000||args.EnumerateObject().Any(a=>a.Name!=key&&!(a.Name=="project"&&(queryTool||name=="analysis"))&&!(a.Name=="limit"&&(queryTool||pagedTool))&&!(a.Name=="offset"&&pagedTool)))throw new ArgumentException("Invalid arguments.");
+                        var project=args.TryGetProperty("project",out var pv)?pv.GetString():null;
+                        var limit=args.TryGetProperty("limit",out var lv)?lv.GetInt32():20;
+                        var offset=args.TryGetProperty("offset",out var ov)?ov.GetInt32():0;
+                        if(limit is <1 or >50||offset is <0 or >1000000)throw new ArgumentException("Invalid pagination.");
+                        using(var deadline=CancellationTokenSource.CreateLinkedTokenSource(ct))
+                        {
+                            deadline.CancelAfter(TimeSpan.FromSeconds(15));
+                            try
+                            {
+                                var content=new McpQueries(workspace).Call(name,value,project,limit,offset,deadline.Token);
+                                deadline.Token.ThrowIfCancellationRequested();
+                                var text=content is string textValue?textValue:Json.Serialize(content);
+                                if(text.Length>262144)throw new InvalidOperationException("Réponse trop volumineuse : réduisez limit ou précisez la recherche. Les résultats ne sont pas supprimés.");
+                                result=ToolResult(text,false);
+                            }
+                            catch(OperationCanceledException) when(!ct.IsCancellationRequested){result=ToolResult("Délai de lecture MCP dépassé (15 s). Précisez la recherche ou réduisez limit ; aucune reconstruction n'a été lancée.",true);}
+                            catch(Microsoft.Data.Sqlite.SqliteException) when(deadline.IsCancellationRequested&&!ct.IsCancellationRequested){result=ToolResult("Délai de lecture MCP dépassé (15 s). Précisez la recherche ou réduisez limit.",true);}
+                            catch(Microsoft.Data.Sqlite.SqliteException e){result=ToolResult(e.SqliteErrorCode is 5 or 6?"Index SQLite occupé ; réessayez après l'opération en cours.":McpIndex.PrepareMessage,true);}
+                            catch(Exception e) when(e is InvalidOperationException or InvalidDataException or ArgumentException or IOException or UnauthorizedAccessException){result=ToolResult(e.Message,true);}
+                        }
+                        break;
+                    default:await Write(new{jsonrpc="2.0",id,error=new{code=-32601,message="Method not found"}});continue;
                 }
                 await Write(new{jsonrpc="2.0",id,result});
             }
-            catch(Exception ex) when(ex is JsonException or InvalidOperationException or ArgumentException or KeyNotFoundException or InvalidDataException)
-            { await Write(new{jsonrpc="2.0",id,error=new{code=-32602,message="Invalid request or knowledge state"}}); }
+            catch(Exception ex) when(ex is JsonException or InvalidOperationException or ArgumentException or KeyNotFoundException or FormatException or OverflowException)
+            {await Write(new{jsonrpc="2.0",id,error=new{code=-32602,message="Invalid request or arguments"}});}
         }
-        async Task Write(object value) { var options=new JsonSerializerOptions(Json.Options){WriteIndented=false};await output.WriteLineAsync(JsonSerializer.Serialize(value,options));await output.FlushAsync(ct); }
+        static object ToolResult(string text,bool isError)=>new{content=new[]{new{type="text",text}},isError};
+        async Task Write(object value){var options=new JsonSerializerOptions(Json.Options){WriteIndented=false};await output.WriteLineAsync(JsonSerializer.Serialize(value,options));await output.FlushAsync(ct);}
     }
 }
