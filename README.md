@@ -2,7 +2,7 @@
 
 Business analyste local avec une mémoire sourcée : comprendre le métier, ses processus, règles, exceptions, décisions et la transformation souhaitée. Copilot conduit le cadrage et l'analyse ; bip-kb conserve les preuves, les connaissances et leurs relations, puis les rend consultables rapidement par CLI, interface locale et MCP.
 
-**Version 0.5.1.** Lors du premier ajout interactif, saisissez la description de la source ou tapez `/skip` pour passer. Un projet par workspace, entretien conversationnel, analyse des documents à l'échelle des sections, reprise et fiches sourcées. Les tests logiciels utilisent notamment un processus Copilot simulé ; la compréhension sur un corpus professionnel et la lecture native Excel par le vrai Copilot restent à valider. Voir le [guide complet et les limites](docs/business-analyst-guide.md).
+**Version 0.5.2.** `ask` et `chat` ajustent les preuves, le cadrage et l’historique au budget de chaque appel Copilot. Lors du premier ajout interactif, saisissez la description de la source ou tapez `/skip` pour passer. Un projet par workspace, entretien conversationnel, analyse des documents à l'échelle des sections, reprise et fiches sourcées. Les tests logiciels utilisent notamment un processus Copilot simulé ; la compréhension sur un corpus professionnel et la lecture native Excel par le vrai Copilot restent à valider. Voir le [guide complet et les limites](docs/business-analyst-guide.md).
 
 Socle : .NET 10, SQLite FTS5, Razor Pages, outil .NET `bip-kb`. Windows est la plateforme prioritaire ; les tests CI couvrent Windows et Linux. Le partage se fait par Git, sans commit ou push automatique par le produit.
 
@@ -24,7 +24,7 @@ Sous Linux :
 dotnet restore --locked-mode
 dotnet test --no-restore
 dotnet pack src/BipKb -c Release --no-restore -o artifacts
-dotnet tool install BipKb --version 0.5.1 --add-source ./artifacts --tool-path ./artifacts/tools
+dotnet tool install BipKb --version 0.5.2 --add-source ./artifacts --tool-path ./artifacts/tools
 ```
 
 Sous Windows, bip-kb détecte la distribution native `copilot.exe` et l'installation npm `@github/copilot` via Node.js. Le lanceur `copilot.ps1` seul ne garantit pas la présence de la CLI autonome. `bip-kb doctor` inspecte l'installation ; `bip-kb doctor --live` effectue une vraie requête.

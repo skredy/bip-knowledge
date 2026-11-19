@@ -86,6 +86,35 @@ public class AssistantTests
         Assert.Contains("Réponse sourcée",research.Export(task.Id));Assert.False(research.IsStale(task));
         s.File("extra.md","Une nouvelle exception existe.");await new Ingestor(s.Workspace,new FakeAnalyzer()).Run(s.Source,null,null,false,default);Assert.True(research.IsStale(task));
     }
+    [Theory]
+    [InlineData(6000)]
+    [InlineData(16000)]
+    public void ShortQuestionFitsWithLargeEvidenceListsFramingAndHistory(int budget)
+    {
+        var ids = Enumerable.Range(0, 500).Select(n => Json.Hash(n.ToString())).ToArray();
+        var hit = new SearchHit("facture", "claim", "Facture", "Règle de facturation", "iBip", null,
+            SourceRole.Target, ids, 1, [], KnowledgeState.Reexamine);
+        var oversized = new string('é', 8000);
+        var profile = Profile() with { Glossary = [new("mot", [], oversized, null)] };
+        var now = DateTimeOffset.UtcNow;
+        List<TaskTurn> turns = [new("ancien", "assistant", oversized, now, ids),
+            new("suite", "user", "Et pour les annulations ?", now, [])];
+        var declaration = new OpenQuestion("d", "iBip", "Quel seuil ?", ids, "500", "Alice");
+
+        var request = Research.BuildRequest("Comment facturer ?", profile, [hit], turns, [declaration], 1, budget);
+
+        Assert.InRange(Json.Serialize(request).Length, 1, budget);
+        Assert.Equal(turns[^1].Text, request.Conversation[^1].Text);
+        Assert.Equal(profile.Name, request.Project!.Name);
+        Assert.Contains(request.HumanDeclarations!, q => q.Id == declaration.Id);
+        var sent = Assert.Single(request.Findings);
+        Assert.Contains(ids[0], sent.EvidenceIds);
+        Assert.All(request.Coverage.SelectMany(c => c.EvidenceIds), id => Assert.Contains(id, sent.EvidenceIds));
+        Assert.DoesNotContain(ids[^1], sent.EvidenceIds);
+        Assert.Throws<InvalidDataException>(() => Research.Validate(new("Réponse", [ids[^1]], [], []), request));
+        Assert.Equal(500, hit.EvidenceIds.Length);
+    }
+
     [Fact] public void ResearchRejectsInventedCitationsAndEmptyCorpusDoesNotProveAbsence()
     {
         var request=new ResearchRequest("facture",null,[],[],[],1);

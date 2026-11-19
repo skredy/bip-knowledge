@@ -42,7 +42,8 @@ public sealed class Research(Workspace workspace,IResearchAssistant assistant)
             if(message.Length>4000)throw new ArgumentException("Message exceeds 4000 characters.");
             turns.Add(new(Guid.NewGuid().ToString("N"),"user",message,DateTimeOffset.UtcNow,[]));
         }
-        var pending=new Queue<string>();pending.Enqueue(task.Goal+(message==null?"":" "+message));var asked=new HashSet<string>();ResearchAdvice? advice=null;
+        var queryText=message==null ? task.Goal : message+" "+task.Goal;
+        var pending=new Queue<string>();pending.Enqueue(queryText[..Math.Min(4000,queryText.Length)]);var asked=new HashSet<string>();ResearchAdvice? advice=null;
         var settings=workspace.Config;var cycles=Math.Clamp(settings.MaxResearchCycles,1,5);var engine=new SearchEngine(workspace);
         for(var cycle=0;cycle<cycles&&pending.Count>0;cycle++)
         {
@@ -50,11 +51,8 @@ public sealed class Research(Workspace workspace,IResearchAssistant assistant)
             var result=engine.Search(new(query,task.Project,Depth:Math.Clamp(settings.GraphDepth,0,3)));
             steps.Add(new(cycle+1,query,result.Hits.Select(h=>h.Id).ToArray(),result.Milliseconds));foreach(var hit in result.Hits)findings[hit.Id]=hit;
             var selected=findings.Values.OrderByDescending(h=>h.Score).Take(30).ToArray();
-            var request=new ResearchRequest(task.Goal,Compact(profile,task.Goal),selected,turns.TakeLast(6).Select(t=>t with{Text=t.Text[..Math.Min(t.Text.Length,1500)]}).ToArray(),Coverage(selected),cycle+1,workspace.Load().Questions.Where(q=>q.Project==task.Project&&q.Answer!=null).TakeLast(5).Select(q=>q with{Answer=q.Answer![..Math.Min(500,q.Answer!.Length)]}).ToArray());
-            var budget=Math.Clamp(settings.ResearchBudget,6000,18000);
-            while(Json.Serialize(request).Length>budget&&request.Findings.Length>0)request=request with{Findings=request.Findings[..^1]};
-            if(Json.Serialize(request).Length>budget)throw new InvalidOperationException("Project and conversation exceed research budget; start a more focused task.");
-            request=request with{Coverage=Coverage(request.Findings)};
+            var declarations=workspace.Load().Questions.Where(q=>q.Project==task.Project&&q.Answer!=null).TakeLast(5);
+            var request=BuildRequest(task.Goal,profile,selected,turns,declarations,cycle+1,settings.ResearchBudget);
             steps[^1]=steps[^1] with{SuppliedIds=request.Findings.Select(h=>h.Id).ToArray(),RequestHash=Json.Hash(Json.Serialize(request))};
             advice=await assistant.Investigate(request,ct);Validate(advice,request);
             foreach(var next in advice.NextQueries.Where(q=>!asked.Contains(q)).Take(3))pending.Enqueue(next);
@@ -74,6 +72,72 @@ public sealed class Research(Workspace workspace,IResearchAssistant assistant)
         }
         workspace.Save(k);return final;
     }
+    public static ResearchRequest BuildRequest(string goal, ProjectProfile profile, SearchHit[] ranked, List<TaskTurn> turns,
+        IEnumerable<OpenQuestion> declarations, int cycle, int configuredBudget)
+    {
+        var budget = Math.Clamp(configuredBudget, 6000, 18000);
+        var latest = turns.LastOrDefault();
+        var current = latest?.Role == "user" ? latest : null;
+        var request = new ResearchRequest(goal, null, [], current == null ? [] : [current with { Citations = [] }], [], cycle, []);
+        if (Json.Serialize(request).Length > budget)
+            throw new ArgumentException($"La question et l’objectif dépassent à eux seuls la limite de {budget} caractères JSON. Raccourcissez la question ou l’objectif.");
+
+        bool Include(ResearchRequest candidate)
+        {
+            if (Json.Serialize(candidate).Length > budget) return false;
+            request = candidate;
+            return true;
+        }
+
+        static string Excerpt(string text, int length) => text.Length <= length ? text : text[..length] + " […]";
+        static string[]? Conditions(string[]? values)
+        {
+            if (values == null) return null;
+            var excerpts = values.Take(3).Select(value => Excerpt(value, 240)).ToArray();
+            return values.Length > excerpts.Length ? [..excerpts, "[conditions supplémentaires omises]"] : excerpts;
+        }
+
+        void AddHit(SearchHit hit)
+        {
+            var excerpt = hit with
+            {
+                Title = Excerpt(hit.Title, 200), Text = Excerpt(hit.Text, 1000),
+                EvidenceIds = hit.EvidenceIds.Take(3).ToArray(), SearchTerms = null, Conditions = Conditions(hit.Conditions),
+                Reasons = hit.Reasons.Take(4).Select(r => Excerpt(r, 120)).ToArray()
+            };
+            bool Add(SearchHit item)
+            {
+                SearchHit[] hits = [..request.Findings, item];
+                return Include(request with { Findings = hits, Coverage = Coverage(hits) });
+            }
+            if (!Add(excerpt))
+                Add(excerpt with { Text = Excerpt(hit.Text, 240), EvidenceIds = hit.EvidenceIds.Take(1).ToArray() });
+        }
+
+        var summary = new ProjectProfile(profile.Id, profile.Name, Excerpt(profile.Objective, 300),
+            Excerpt(profile.Architecture, 200), [], [], [], [], []);
+        Include(request with { Project = summary });
+        // Reserve room for the top evidence before optional framing and history.
+        foreach (var hit in ranked.Take(2)) AddHit(hit);
+        var framing = Compact(profile, current?.Text ?? goal);
+        if (!Include(request with { Project = framing }))
+            Include(request with { Project = summary with { Brief = framing.Brief } });
+        foreach (var declaration in declarations.Reverse())
+        {
+            var item = declaration with { Text = Excerpt(declaration.Text, 240),
+                Answer = Excerpt(declaration.Answer!, 500), EvidenceIds = declaration.EvidenceIds.Take(3).ToArray() };
+            Include(request with { HumanDeclarations = [item, ..request.HumanDeclarations!] });
+        }
+        foreach (var turn in turns.Take(turns.Count - (current == null ? 0 : 1)).TakeLast(5).Reverse())
+        {
+            var item = turn with { Text = Excerpt(turn.Text, 600), Citations = turn.Citations.Take(3).ToArray() };
+            Include(request with { Conversation = [item, ..request.Conversation] });
+        }
+        foreach (var hit in ranked.Skip(2)) AddHit(hit);
+        if (request.Findings.Length == 0) Include(request with { Coverage = Coverage([]) });
+        return request;
+    }
+
     public static ProjectProfile Compact(ProjectProfile p,string? goal=null)
     {
         var compact=BusinessInterview.Compact(p) with{Objective=p.Objective[..Math.Min(600,p.Objective.Length)],Architecture=p.Architecture[..Math.Min(600,p.Architecture.Length)],Conventions=p.Conventions.Take(5).Select(c=>c[..Math.Min(c.Length,200)]).ToArray(),Glossary=p.Glossary.Take(5).ToArray(),Domains=p.Domains.Take(5).ToArray(),Authorities=p.Authorities.Take(5).ToArray(),Systems=p.Systems.Take(5).ToArray()};
