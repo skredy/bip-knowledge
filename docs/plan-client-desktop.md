@@ -9,6 +9,12 @@ Le client WPF regroupe le cadrage, la collecte de sources, les recherches, les d
 3. Pour les fonctions d’analyse, utiliser le Copilot CLI approuvé et authentifié dans la même session Windows. « Vérifier Copilot sur ce poste » vérifie le lanceur avant même la création d’une base. **Activité et outils → Tester Copilot en ligne** vérifie aussi la réponse du service avec le proxy et l’identité effectifs de l’utilisateur. Le panneau technique indique l’exécutable résolu et la prise en charge des pièces jointes.
 4. Choisir **Créer** et un dossier dédié vide, ou **Ouvrir** et le dossier d’une base existante. Le chemin complet reste affiché. Un espace récemment utilisé est proposé au prochain démarrage si le profil utilisateur est conservé. Un raccourci peut aussi lancer `BipKb.Desktop.exe --workspace "D:\Knowledge\ibip"`.
 
+### Lancer le build sur GitHub
+
+Dans GitHub, ouvrir **Actions → Validate → Run workflow**, sélectionner **develop** puis lancer. Le build manuel compile et teste le client Windows. Les push et pull requests déclenchent aussi les tests de la CLI. Une fois le job **desktop** réussi, ouvrir le résumé de l’exécution et cliquer sur **Télécharger bip-kb Desktop pour Windows x64**. L’artefact est aussi disponible sous **Artifacts → bip-kb-desktop-win-x64** en étant connecté au dépôt.
+
+Avec GitHub CLI depuis le dépôt, la commande équivalente est `gh workflow run ci.yml --ref develop`. [Ouvrir le workflow Validate](https://github.com/skredy/bip-knowledge/actions/workflows/ci.yml)
+
 ### Choisir les emplacements
 
 | Données | Emplacement et durée de vie |

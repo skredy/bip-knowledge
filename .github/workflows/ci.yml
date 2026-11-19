@@ -1,9 +1,13 @@
 name: Validate
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
   test:
+    if: github.event_name != 'workflow_dispatch'
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -56,7 +60,16 @@ jobs:
       - name: Open WPF and exercise workspace screens
         shell: pwsh
         run: ./scripts/test-desktop.ps1 -Directory artifacts/desktop-win-x64
-      - uses: actions/upload-artifact@v4
+      - name: Upload Windows application
+        id: desktop-package
+        uses: actions/upload-artifact@v4
         with:
+          if-no-files-found: error
           name: bip-kb-desktop-win-x64
           path: artifacts/desktop-win-x64/
+      - name: Link the Windows download in the run summary
+        shell: pwsh
+        env:
+          PACKAGE_URL: ${{ steps.desktop-package.outputs.artifact-url }}
+        run: |
+          "[Télécharger bip-kb Desktop pour Windows x64]($env:PACKAGE_URL)" >> $env:GITHUB_STEP_SUMMARY
