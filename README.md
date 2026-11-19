@@ -2,6 +2,8 @@
 
 Assistant local de connaissance technique : ingestion de documents et de code, mémoire sourcée, recherche, enquêtes avec Copilot CLI et dossiers de travail persistants. .NET 10, SQLite FTS5, Razor Pages, partage par Git et MCP en lecture seule.
 
+La [proposition de refonte de l'analyse et de la recherche](docs/knowledge-redesign.md) décrit une compréhension globale des documents pilotée par Copilot avant l'indexation métier. Elle distingue les capacités envisagées du fonctionnement actuel décrit ci-dessous.
+
 **Version 0.4.7.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
 
 La 0.4.2 corrige le décodage des réponses et erreurs Copilot sous Windows : l'entrée et les deux sorties du processus utilisent explicitement UTF-8, indépendamment de la page de codes de la console. Le test de conservation des accents et caractères Unicode reste actif.
