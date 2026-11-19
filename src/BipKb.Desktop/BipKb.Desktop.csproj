@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>BipKb.Desktop</AssemblyName>
+    <Description>Client Windows de la base de connaissances bip-kb</Description>
+    <Version>0.6.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../BipKb/BipKb.csproj" />
+  </ItemGroup>
+</Project>

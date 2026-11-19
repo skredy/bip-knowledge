@@ -1,0 +1,32 @@
+<Window x:Class="BipKb.Desktop.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Title="bip-kb · Espace d’analyse" Width="1160" Height="790" MinWidth="760" MinHeight="540" FontFamily="Segoe UI" FontSize="14" Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}" Closing="ClosingWindow">
+ <DockPanel>
+  <Border DockPanel.Dock="Top" Background="#183D40" Padding="18,10">
+   <DockPanel LastChildFill="True">
+    <WrapPanel DockPanel.Dock="Right" x:Name="WorkspaceButtons"><Button Content="Créer…" Click="CreateWorkspace"/><Button Content="Ouvrir…" Click="OpenWorkspace"/></WrapPanel>
+    <StackPanel><TextBlock Text="bip-kb" Foreground="White" FontSize="23" FontWeight="SemiBold"/><TextBlock x:Name="WorkspaceLabel" Foreground="#DEECE8" Text="Sélectionnez un espace de connaissance" TextTrimming="CharacterEllipsis"/></StackPanel>
+   </DockPanel>
+  </Border>
+  <Border DockPanel.Dock="Bottom" Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}" Padding="14,5"><DockPanel><Button x:Name="CancelButton" DockPanel.Dock="Right" Content="Interrompre" Click="CancelJob" IsEnabled="False"/><TextBlock x:Name="Status" VerticalAlignment="Center" Text="Prêt" TextTrimming="CharacterEllipsis"/></DockPanel></Border>
+  <Grid Margin="14">
+   <Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+   <DockPanel><TextBlock DockPanel.Dock="Top" Text="Espace de travail" Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" Margin="5,6,5,14" FontWeight="SemiBold"/>
+    <ListBox x:Name="Nav" BorderThickness="0" Background="Transparent" SelectionChanged="Navigate">
+     <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="Padding" Value="12,10"/></Style></ListBox.ItemContainerStyle>
+     <ListBoxItem>Projet</ListBoxItem><ListBoxItem>Sources</ListBoxItem><ListBoxItem>Connaissances</ListBoxItem><ListBoxItem>Dossiers</ListBoxItem><ListBoxItem>Arbitrages</ListBoxItem><ListBoxItem>Activité et outils</ListBoxItem>
+    </ListBox>
+   </DockPanel>
+   <Grid Grid.Column="2">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto" MaxHeight="295"/><RowDefinition Height="10"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+    <TextBlock x:Name="Heading" FontSize="26" Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" Margin="2,0,0,8" FontWeight="SemiBold"/>
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"><StackPanel x:Name="Controls" Margin="2"/></ScrollViewer>
+    <TabControl Grid.Row="3" x:Name="OutputTabs">
+     <TabItem Header="Résultat"><Grid Margin="9"><Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><TextBox x:Name="Answer" IsReadOnly="True" BorderThickness="0" FontSize="15"/><ListBox Grid.Row="1" MaxHeight="155" x:Name="Links" DisplayMemberPath="Label" MouseDoubleClick="Follow" KeyDown="FollowKey" ToolTip="Double-clic ou Entrée pour ouvrir"/></Grid></TabItem>
+     <TabItem Header="Preuves"><TextBox x:Name="Proof" Margin="9" BorderThickness="0" IsReadOnly="True"/></TabItem>
+     <TabItem Header="Détail technique"><TextBox x:Name="Technical" Margin="9" FontFamily="Consolas" FontSize="12" BorderThickness="0" IsReadOnly="True"/></TabItem>
+     <TabItem Header="Journal"><TextBox x:Name="History" Margin="9" BorderThickness="0" IsReadOnly="True"/></TabItem>
+    </TabControl>
+   </Grid>
+  </Grid>
+ </DockPanel>
+</Window>

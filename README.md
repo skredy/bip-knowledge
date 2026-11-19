@@ -6,6 +6,10 @@ Business analyste local avec une mémoire sourcée : comprendre le métier, ses 
 
 Socle : .NET 10, SQLite FTS5, Razor Pages, outil .NET `bip-kb`. Windows est la plateforme prioritaire ; les tests CI couvrent Windows et Linux. Le partage se fait par Git, sans commit ou push automatique par le produit.
 
+## Application Windows et VDI
+
+Téléchargez l’artefact **bip-kb-desktop-win-x64** de la validation Windows, extrayez le dossier complet et lancez **BipKb.Desktop.exe**. Le client WPF autonome regroupe le cadrage, les sources, les questions, les preuves, les arbitrages et les diagnostics. Choisissez un disque persistant de la VDI pour votre workspace. [Installation et guide Desktop](docs/plan-client-desktop.md)
+
 ## Installer ou mettre à jour
 
 Prérequis : SDK .NET 10 avec ASP.NET Core, Git et Copilot CLI authentifié pour les opérations d'analyse. L'indexation locale et la recherche directe ne demandent pas de modèle.

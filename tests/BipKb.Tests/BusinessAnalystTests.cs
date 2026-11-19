@@ -7,6 +7,7 @@ namespace BipKb.Tests;
 public sealed class BusinessDouble : IBusinessAssistant,IAnalyzer
 {
     public int FrameCalls,DocumentCalls,QualificationCalls;
+    public string SourceQuestion = "";
     public Func<BriefRequest,BriefReply>? Framing;
     public Func<BusinessRequest,BusinessReply>? Reading;
     public Task<BriefReply> Frame(BriefRequest r,CancellationToken ct)
@@ -23,7 +24,7 @@ public sealed class BusinessDouble : IBusinessAssistant,IAnalyzer
                 ["Les règles de réactivation sont-elles documentées ?"]));
     }
     public Task<SourceQualification> Qualify(SourceQualificationRequest r,CancellationToken ct)
-    {QualificationCalls++;return Task.FromResult(new SourceQualification("Étude des contrats",["Contrats"],SourceRole.Unknown,SourceStatus.Proposal,"","Rôle mixte à préciser lors de l'analyse."));}
+    {QualificationCalls++;return Task.FromResult(new SourceQualification("Étude des contrats",["Contrats"],SourceRole.Unknown,SourceStatus.Proposal,SourceQuestion,"Rôle mixte à préciser lors de l'analyse."));}
     public Task<BusinessReply> Understand(BusinessRequest r,string? a,CancellationToken ct)
     {DocumentCalls++;return Task.FromResult(Reading?.Invoke(r)??Finish(r));}
     public static BusinessReply Finish(BusinessRequest r)=>new("finish","La consultation des contrats nécessite un contrôle des droits.",[],
@@ -104,6 +105,24 @@ public class BusinessAnalystTests
         using var locked=new FileStream(Path.Combine(s.Workspace.Local,"materialized.json"),FileMode.Open,FileAccess.Read,FileShare.None);
         Assert.Contains("iBip",Json.Serialize(new McpQueries(s.Workspace).Call("project","",null,20,0,default)));
     }
+    [Fact]
+    public async Task DesktopSourceClarificationAndApprovalPrecedeBinding()
+    {
+        using var s=new Sandbox();
+        var model=new BusinessDouble { SourceQuestion="Ce document décrit-il la cible ?" };
+        await Frame(s,model);
+        var file=s.File("contrats.md","Étude des contrats");
+        var initial=Json.Serialize(s.Workspace.Config.Sources);
+        var seen=false;
+        var setup=new BusinessSourceSetup(s.Workspace,model,TextReader.Null,TextWriter.Null,false,
+            clarify:question=>{Assert.Equal(model.SourceQuestion,question);return "Cible proposée";},
+            confirm:(id,descriptor)=>{seen=true;Assert.Equal(SourceRole.Target,descriptor.Role);throw new OperationCanceledException();});
+        await Assert.ThrowsAsync<OperationCanceledException>(()=>setup.Prepare(file,null,SourceRole.Target,"Étude",true,true,default));
+        Assert.True(seen);
+        Assert.Equal(2,model.QualificationCalls);
+        Assert.Equal(initial,Json.Serialize(s.Workspace.Config.Sources));
+    }
+
     [Fact]
     public async Task QualificationUsesProjectAndDoesNotRequireManualDomainOrRole()
     {

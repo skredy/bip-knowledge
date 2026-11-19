@@ -40,3 +40,23 @@ jobs:
           path: |
             artifacts/*.nupkg
             **/TestResults/*.trx
+  desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Publish self-contained Windows desktop
+        shell: pwsh
+        run: ./scripts/publish-desktop.ps1
+      - name: Test packaged CLI and Copilot fixture
+        shell: pwsh
+        run: python scripts/test-business.py --tool artifacts/desktop-win-x64/BipKb.exe
+      - name: Open WPF and exercise workspace screens
+        shell: pwsh
+        run: ./scripts/test-desktop.ps1 -Directory artifacts/desktop-win-x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bip-kb-desktop-win-x64
+          path: artifacts/desktop-win-x64/

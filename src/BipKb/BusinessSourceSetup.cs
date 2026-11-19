@@ -1,6 +1,7 @@
 namespace BipKb;
 
-public sealed class BusinessSourceSetup(Workspace workspace,IBusinessAssistant assistant,TextReader input,TextWriter output,bool interactive,Action<string>? progress=null)
+public sealed class BusinessSourceSetup(Workspace workspace,IBusinessAssistant assistant,TextReader input,TextWriter output,bool interactive,Action<string>? progress=null,
+    Func<string,string?>? clarify=null,Action<string,SourceDescriptor>? confirm=null)
 {
     public static void Validate(SourceQualification q)
     {
@@ -53,11 +54,11 @@ public sealed class BusinessSourceSetup(Workspace workspace,IBusinessAssistant a
             }
             output.WriteLine("Qualification de la source à partir du cadrage — attente de Copilot");
             qualification=await assistant.Qualify(new(BusinessInterview.Compact(profile),Path.GetFileName(path),inventory.ToArray(),notes),ct);Validate(qualification);
-            if(qualification.Question.Length>0&&interactive)
+            if(qualification.Question.Length>0&&(interactive||clarify!=null))
             {
                 progress?.Invoke("");
                 output.WriteLine(qualification.Question+" (Entrée : laisser à éclaircir)");output.Write("> ");output.Flush();
-                var answer=input.ReadLine()??throw new OperationCanceledException();if(answer=="/pause")throw new OperationCanceledException();
+                var answer=(clarify!=null?clarify(qualification.Question):input.ReadLine())??throw new OperationCanceledException();if(answer=="/pause")throw new OperationCanceledException();
                 if(answer.Length>1500)throw new ArgumentException("Précision limitée à 1500 caractères.");
                 if(!string.IsNullOrWhiteSpace(answer))
                 {
@@ -73,7 +74,9 @@ public sealed class BusinessSourceSetup(Workspace workspace,IBusinessAssistant a
         var context=new SourceContext(profile.Name,"Transversal",qualification.Purpose,qualification.Status,detail[..Math.Min(1200,detail.Length)]);
         var boundRole=config.Sources.SingleOrDefault(s=>s.Id==sourceId)?.Role;
         var effectiveRole=role??(boundRole is not null and not SourceRole.Unknown?boundRole.Value:qualification.Role);
-        workspace.ConfigureSource(sourceId,root,path,new(effectiveRole,context));
+        var descriptor=new SourceDescriptor(effectiveRole,context);
+        confirm?.Invoke(sourceId,descriptor);
+        workspace.ConfigureSource(sourceId,root,path,descriptor);
         return sourceId;
     }
 
