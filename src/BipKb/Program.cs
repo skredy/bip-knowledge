@@ -10,7 +10,7 @@ public static class Cli
     public static async Task<int> Run(string[] args)
     {
         if(args.Length==1 && args[0] is "--help" or "-h")args=["help"];
-        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.5.2");return 0;}
+        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.5.3");return 0;}
         using var cancel=new CancellationTokenSource();
         Console.CancelKeyPress+=(_,e)=>{e.Cancel=true;cancel.Cancel();};
         try
@@ -48,7 +48,7 @@ bip-kb — Analyste métier et mémoire sourcée
       --message <description> supplies source context without a form.
       --reanalyze: force full model analysis, bypassing cached answers.
       First import: guided context; /cancel aborts before ingestion.
-  search <query> | ask <question> | context <task> [--output <file>]
+  search <query> | ask <question> [--json] | context <task> [--output <file>]
   report <ingestion-id> | analysis <source-id> | review
   --ingest <path> --analyze [--analysis-mode guided|batches] [--max-calls 50]
       guided explores first; batches resumes older analyses. --reanalyze bypasses caches.
@@ -157,7 +157,10 @@ All commands: --workspace <directory>, --json. Quote multiword arguments.
                     break;
                 case "search":result=new SearchEngine(workspace).Search(new(Required(1),parsed.Get("project"),parsed.Get("domain"),role,parsed.Get("intent")??"general",IncludeHistorical:parsed.Has("history")));break;
                 case "ask":
-                    var quick=research.Start(Required(1),parsed.Get("project"));result=await research.Run(quick.Id,null,cancel.Token);break;
+                    var quick=research.Start(Required(1),parsed.Get("project"));
+                    var completed=await research.Run(quick.Id,null,cancel.Token);
+                    result=parsed.Has("json") ? completed : completed.Turns[^1].Text;
+                    break;
                 case "context":
                     var context=service.Context(Required(1),parsed.Get("project"),parsed.Get("domain"));if(parsed.Get("output") is {} output){File.WriteAllText(output,context);result=new{output};}else result=context;break;
                 case "report":result=workspace.Load().Reports.SingleOrDefault(r=>r.Id==Required(1))??throw new ArgumentException("Unknown report.");break;
