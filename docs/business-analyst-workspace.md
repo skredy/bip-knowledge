@@ -1,6 +1,6 @@
 # Cible produit : un business analyste avec une mémoire vérifiable
 
-**Statut : conception, non implémentée.** Orientation confirmée le 19 novembre 2026 : un projet par workspace, cadrage conversationnel par Copilot, priorité à la compréhension métier. Le workspace de validation sera neuf ; les données et paramétrages des essais précédents ne sont pas à migrer. Ce choix ne supprime aucun workspace existant.
+**Statut : cible produit ; premier parcours implémenté en 0.5.0.** Voir le [guide de la livraison et ses limites](business-analyst-guide.md). Les capacités avancées décrites ici ne sont pas toutes livrées : notamment la priorisation des grands dossiers et le réexamen fin par dépendances. Orientation confirmée le 19 novembre 2026 : un projet par workspace, cadrage conversationnel par Copilot, priorité à la compréhension métier. Le workspace de validation sera neuf ; les données et paramétrages des essais précédents ne sont pas à migrer. Ce choix ne supprime aucun workspace existant.
 
 Ce document complète et oriente la [refonte de l'analyse et de la recherche](knowledge-redesign.md). Il remplace l'idée d'un outil de code enrichi d'un profil de projet par celle d'un analyste métier qui conserve ses sources, ses raisonnements explicités et ses questions ouvertes. « Raisonnement explicité » désigne une justification vérifiable par l'utilisateur, pas une trace interne du modèle.
 

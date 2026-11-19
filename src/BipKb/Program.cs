@@ -10,7 +10,7 @@ public static class Cli
     public static async Task<int> Run(string[] args)
     {
         if(args.Length==1 && args[0] is "--help" or "-h")args=["help"];
-        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.4.7");return 0;}
+        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.5.0");return 0;}
         using var cancel=new CancellationTokenSource();
         Console.CancelKeyPress+=(_,e)=>{e.Cancel=true;cancel.Cancel();};
         try
@@ -24,11 +24,13 @@ public static class Cli
             {
                 case "help":
                     Console.WriteLine("""
-bip-kb — Mémoire technique sourcée
+bip-kb — Analyste métier et mémoire sourcée
   init --workspace <empty-directory>
   migrate [--dry-run] | memory resolve --file <resolutions.json>
   project setup [--file <project.json>] | project show [--project <id-or-name>]
-  project summary --project <id-or-name>
+  project summary
+  project setup [--message <answer> | --confirm] [--restart]
+      New workspace: adaptive business interview; /pause and /confirm in interactive mode.
   task start <goal> --project <name> | task resume <id> | task export <id> [--output <file>]
   chat --task <id> | chat --task <id> --message <text>
   questions [--project <name>] | question answer <id> --message <answer> --actor <name> --confirm
@@ -41,7 +43,9 @@ bip-kb — Mémoire technique sourcée
   --ingest --file <file> | --path <directory> | --image <image> | --schema <drawio>
       [--source <id>] [--role <role>] [--analyze | --reanalyze]
       [--describe] [--context-file <json>] [--non-interactive]
-      Default: local indexing, no Copilot call. --analyze: full model analysis.
+      New workspace: Excel/Draw.io/images use Copilot by default; --index-only keeps local indexing.
+      Code/folders: local indexing by default; --analyze requests model analysis.
+      --message <description> supplies source context without a form.
       --reanalyze: force full model analysis, bypassing cached answers.
       First import: guided context; /cancel aborts before ingestion.
   search <query> | ask <question> | context <task> [--output <file>]
@@ -61,8 +65,25 @@ All commands: --workspace <directory>, --json. Quote multiword arguments.
                     if(Required(1)!="resolve")throw new ArgumentException("Use memory resolve --file.");
                     using(var gate=workspace.Lock()){new MemoryStore(workspace).Resolve(parsed.Get("file")??throw new ArgumentException("Provide --file."));}result=new{status="resolved"};break;
                 case "project":
+                    if(Required(1)=="setup"&&workspace.Config.BusinessMode)
+                    {
+                        if(parsed.Has("file"))throw new ArgumentException("Le nouveau cadrage utilise project setup ou --message, puis --confirm.");
+                        var interview=new BusinessInterview(workspace,analyzer);
+                        if(parsed.Has("restart"))interview.Restart();
+                        await using var framingProgress=new IngestionProgress(parsed.Has("json")?null:Console.Error,label:"cadrage");
+                        analyzer.Progress=framingProgress.Report;
+                        if(parsed.Has("confirm"))
+                        {
+                            if(parsed.Has("message"))throw new ArgumentException("Envoyez votre réponse, examinez le récapitulatif puis confirmez dans une commande distincte.");
+                            result=interview.Confirm(parsed.Get("actor")??Environment.UserName);
+                        }
+                        else if(parsed.Get("message") is {} framingMessage) {framingProgress.Report("Compréhension de votre réponse — attente de Copilot");result=await interview.Respond(framingMessage,cancel.Token);}
+                        else if(!Console.IsInputRedirected&&!parsed.Has("non-interactive")&&!parsed.Has("json"))result=await interview.Interactive(Console.In,Console.Error,cancel.Token);
+                        else result=interview.Draft() is {Reply:null,Published:false}?await interview.Respond(null,cancel.Token):(object?)interview.Draft()??new{status="awaiting-answer",question="Que cherchez-vous à comprendre ou à faire évoluer avec ce projet ?",next="project setup --message <réponse>"};
+                        analyzer.Progress=null;break;
+                    }
                     var projects=new Projects(workspace);
-                    result=Required(1) switch{"setup"=>projects.Setup(parsed.Get("file"),Console.In,Console.Error,!Console.IsInputRedirected&&!parsed.Has("non-interactive")&&!parsed.Has("json")),"show"=>(object?)projects.Find(parsed.Get("project"))??workspace.Load().Projects,"summary"=>projects.Summary(parsed.Get("project")??throw new ArgumentException("Provide --project.")),_=>throw new ArgumentException("Use project setup/show/summary.")};break;
+                    result=Required(1) switch{"setup"=>projects.Setup(parsed.Get("file"),Console.In,Console.Error,!Console.IsInputRedirected&&!parsed.Has("non-interactive")&&!parsed.Has("json")),"show"=>(object?)projects.Find(parsed.Get("project"))??workspace.Load().Projects,"summary"=>projects.Summary(parsed.Get("project")??projects.Find(null)?.Name??throw new ArgumentException("Configurez le projet avec project setup.")),_=>throw new ArgumentException("Use project setup/show/summary.")};break;
                 case "task":
                     switch(Required(1))
                     {
@@ -80,14 +101,22 @@ All commands: --workspace <directory>, --json. Quote multiword arguments.
                     return 0;
                 case "questions":result=workspace.Load().Questions.Where(q=>parsed.Get("project")==null||q.Project==parsed.Get("project")).ToArray();break;
                 case "question":if(Required(1)!="answer")throw new ArgumentException("Use question answer.");research.AnswerQuestion(Required(2),parsed.Get("message")??"",parsed.Get("actor")??"",parsed.Has("confirm"));result=new{status="recorded"};break;
-                case "remember":result=research.Remember(parsed.Get("project")??throw new ArgumentException("Provide --project."),Required(1),parsed.Get("actor")??"",parsed.Has("confirm"));break;
+                case "remember":result=research.Remember(parsed.Get("project")??new Projects(workspace).Find(null)?.Name??throw new ArgumentException("Configurez le projet avec project setup."),Required(1),parsed.Get("actor")??"",parsed.Has("confirm"));break;
                 case "entity":
                     if(Required(1)!="rename")throw new ArgumentException("Use entity rename.");
                     using(var gate=workspace.Lock())
                     {workspace.EnsureWritable();var k=workspace.Load();var entity=k.Entities.Single(e=>e.Id==Required(2));var name=parsed.Get("name")??throw new ArgumentException("Provide --name.");k.Entities[k.Entities.IndexOf(entity)]=entity with{Name=name,Aliases=(entity.Aliases??[]).Append(entity.Name).Distinct().ToArray()};workspace.Save(k);result=new{entity.Id,name};}break;
                 case "evaluate":result=Evaluation.Run(workspace,parsed.Get("file")??throw new ArgumentException("Provide --file."));break;
                 case "benchmark":result=Evaluation.Benchmark(int.Parse(parsed.Get("count")??"100000"));break;
-                case "init":workspace.Init();result=new{workspace=workspace.Root,status="initialized"};break;
+                case "init":
+                    workspace.Init(business:true);
+                    if(!Console.IsInputRedirected&&!parsed.Has("non-interactive")&&!parsed.Has("json"))
+                    {
+                        await using var initProgress=new IngestionProgress(Console.Error,label:"cadrage");analyzer.Progress=initProgress.Report;
+                        result=await new BusinessInterview(workspace,analyzer).Interactive(Console.In,Console.Error,cancel.Token);analyzer.Progress=null;
+                    }
+                    else result=new{workspace=workspace.Root,status="initialized",next="bip-kb project setup --workspace "+workspace.Root};
+                    break;
                 case "cache":
                     if(Required(1)!="compact")throw new ArgumentException("Use cache compact [--rebuild].");
                     await using(var cacheProgress=new IngestionProgress(parsed.Has("json")?null:Console.Error,label:"cache"))
@@ -99,19 +128,30 @@ All commands: --workspace <directory>, --json. Quote multiword arguments.
                 case "doctor":result=await analyzer.Doctor(parsed.Has("live"),cancel.Token);break;
                 case "ingest":
                     var input=parsed.IngestionInput();
-                    var analyze=parsed.Has("analyze")||parsed.Has("reanalyze");
+                    if(parsed.Has("index-only")&&(parsed.Has("analyze")||parsed.Has("reanalyze")))throw new ArgumentException("Choisissez --index-only ou --analyze.");
+                    var businessWorkspace=workspace.Config.BusinessMode;
+                    var businessDocument=Path.GetExtension(input).ToLowerInvariant() is ".xlsx" or ".xls" or ".drawio" or ".png" or ".jpg" or ".jpeg";
+                    var analyze=parsed.Has("analyze")||parsed.Has("reanalyze")||businessWorkspace&&businessDocument&&!parsed.Has("index-only");
                     var analysisMode=parsed.Get("analysis-mode")??"guided";
                     if(analysisMode is not ("guided" or "batches"))throw new ArgumentException("--analysis-mode : guided ou batches.");
                     if(!analyze&&(parsed.Has("analysis-mode")||parsed.Has("max-calls")))throw new ArgumentException("--analysis-mode et --max-calls accompagnent --analyze ou --reanalyze.");
                     int? maxCalls=null;
                     if(parsed.Get("max-calls") is {} callsText)
                     {if(analysisMode!="guided"||!int.TryParse(callsText,out var calls)||calls is <1 or >100)throw new ArgumentException("--max-calls : 1 à 100, en mode guided.");maxCalls=calls;}
-                    var source=await new SourceSetup(workspace,Console.In,parsed.Has("json")?TextWriter.Null:Console.Error,!Console.IsInputRedirected&&!parsed.Has("non-interactive")&&!parsed.Has("json"))
-                        .Prepare(input,parsed.Get("source"),role,parsed.Get("context-file"),parsed.Has("describe"),cancel.Token,analyze);
                     await using(var progress=new IngestionProgress(parsed.Has("json")?null:Console.Error))
                     {
                         analyzer.Progress=progress.Report;
-                        try{result=await new Ingestor(workspace,analyzer,progress.Report).Run(input,source,null,parsed.Has("reanalyze"),cancel.Token,analyze,analysisMode=="guided",maxCalls);}
+                        try
+                        {
+                            var interactive=!Console.IsInputRedirected&&!parsed.Has("non-interactive")&&!parsed.Has("json");
+                            var setupOutput=parsed.Has("json")?TextWriter.Null:Console.Error;
+                            if(businessWorkspace&&parsed.Has("context-file"))throw new ArgumentException("Le cadrage est réutilisé automatiquement ; utilisez --message pour préciser le rôle de cette source.");
+                            progress.Report("Préparation et qualification de la source");
+                            var source=businessWorkspace
+                                ?await new BusinessSourceSetup(workspace,analyzer,Console.In,setupOutput,interactive).Prepare(input,parsed.Get("source"),role,parsed.Get("message"),parsed.Has("describe"),analyze,cancel.Token)
+                                :await new SourceSetup(workspace,Console.In,setupOutput,interactive).Prepare(input,parsed.Get("source"),role,parsed.Get("context-file"),parsed.Has("describe"),cancel.Token,analyze);
+                            result=await new Ingestor(workspace,analyzer,progress.Report).Run(input,source,null,parsed.Has("reanalyze"),cancel.Token,analyze,analysisMode=="guided",maxCalls);
+                        }
                         finally{analyzer.Progress=null;}
                     }
                     break;
@@ -125,7 +165,7 @@ All commands: --workspace <directory>, --json. Quote multiword arguments.
                     var analysisSource=Required(1);var analysisStatus=Path.Combine(workspace.Local,"exploration","status");
                     var publishedSources=workspace.Load().Sources.Where(s=>s.Active&&s.SourceId==analysisSource).ToArray();
                     var localStatuses=Directory.Exists(analysisStatus)?Directory.GetFiles(analysisStatus,"*.json").Select(f=>Json.Read<ExplorationStatus>(File.ReadAllText(f))).Where(s=>s.Source==analysisSource).ToArray():[];
-                    result=new{published=publishedSources.Where(s=>s.Exploration!=null).Select(s=>new{s.RelativePath,s.Analyzed,s.Exploration}),
+                    result=new{published=publishedSources.Where(s=>s.Exploration!=null||s.Business!=null).Select(s=>new{s.RelativePath,s.Analyzed,s.Exploration,s.Business}),
                         local=localStatuses.Select(s=>new{s.RelativePath,s.Step,s.RemainingUnits,s.Plan,s.Profile,state=publishedSources.Any(p=>p.Exploration?.RunId==s.RunId)?"published":s.State,
                             stale=publishedSources.Any(p=>p.RelativePath==s.RelativePath&&p.CacheKey!=s.SourceKey)})};break;
                 case "reindex":
@@ -171,7 +211,7 @@ public sealed class Arguments
     public List<string> Words {get;}=[];
     public Arguments(string[] args)
     {
-        string[] switches=["json","ingest","analyze","reanalyze","live","describe","non-interactive","dry-run","confirm","history","rebuild"];string[] values=["workspace","file","path","image","schema","source","role","output","port","action","reason","actor","context-file","project","domain","task","message","name","count","intent","analysis-mode","max-calls"];
+        string[] switches=["json","ingest","analyze","reanalyze","live","describe","non-interactive","dry-run","confirm","history","rebuild","restart","index-only"];string[] values=["workspace","file","path","image","schema","source","role","output","port","action","reason","actor","context-file","project","domain","task","message","name","count","intent","analysis-mode","max-calls"];
         for(var i=0;i<args.Length;i++)
         {
             if(!args[i].StartsWith("--")){Words.Add(args[i]);continue;}

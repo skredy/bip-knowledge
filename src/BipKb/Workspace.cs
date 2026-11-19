@@ -8,12 +8,12 @@ public sealed class Workspace(string root)
     public string Local => Path.Combine(Root, ".local");
     public string StatePath => Path.Combine(Root, "knowledge.json");
     public Settings Config => Json.Read<Settings>(File.ReadAllText(Path.Combine(Root, "bip.json")));
-    public void Init()
+    public void Init(bool business = false)
     {
         Directory.CreateDirectory(Root);
         if (File.Exists(Path.Combine(Root, "bip.json"))) throw new InvalidOperationException("Workspace already initialized.");
         if (Directory.EnumerateFileSystemEntries(Root).Any()) throw new InvalidOperationException("Use an empty, dedicated knowledge directory.");
-        Json.Write(Path.Combine(Root, "bip.json"), new Settings());
+        Json.Write(Path.Combine(Root, "bip.json"), new Settings { BusinessMode=business });
         Json.Write(StatePath, new {version=2});
         new MemoryStore(this).Publish(new Knowledge());
         File.WriteAllText(Path.Combine(Root, ".gitignore"), ".local/\n*.tmp\n");
@@ -32,6 +32,7 @@ public sealed class Workspace(string root)
         using var document=System.Text.Json.JsonDocument.Parse(content);
         var version=document.RootElement.GetProperty("version").GetInt32();
         var k=version==2?new MemoryStore(this).Load():Json.Read<Knowledge>(content);
+        if(Config.BusinessMode&&k.Projects.Count>1)throw new InvalidDataException("Un seul projet par workspace ; créez un espace neuf.");
         Validate(k); return k;
     }
     public static void Validate(Knowledge k)
@@ -40,6 +41,17 @@ public sealed class Workspace(string root)
         static void Unique(IEnumerable<string> ids) { var a=ids.ToArray(); if(a.Distinct().Count()!=a.Length) throw new InvalidDataException("Duplicate identifiers."); }
         Unique(k.Claims.Select(x=>x.Id)); Unique(k.Evidence.Select(x=>x.Id)); Unique(k.Entities.Select(x=>x.Id)); Unique(k.Sources.Select(x=>x.Id));
         Unique(k.Objects.Select(x=>x.Id));Unique(k.Relations.Select(x=>x.Id));Unique(k.Projects.Select(x=>x.Id));Unique(k.Tasks.Select(x=>x.Id));Unique(k.Questions.Select(x=>x.Id));
+        foreach(var p in k.Projects.Where(p=>p.Brief!=null))
+        {
+            var brief=p.Brief!;
+            if(brief.Declarations==null||brief.Declarations.Any(t=>t.Role!="user"||string.IsNullOrWhiteSpace(t.Id)||t.Text==null||t.Text.Length>4000)||brief.Declarations.Select(t=>t.Id).Distinct().Count()!=brief.Declarations.Length||string.IsNullOrWhiteSpace(brief.Actor)||brief.Actor.Length>200)throw new InvalidDataException("Provenance du cadrage invalide.");
+            BusinessInterview.Validate(new("Cadrage confirmé","","",true,brief.Content),new(1,"validation","",p,[]));
+        }
+        foreach(var source in k.Sources.Where(s=>s.Business!=null))
+        {
+            var b=source.Business!;
+            if(!Guid.TryParseExact(b.RunId,"N",out _)||string.IsNullOrWhiteSpace(b.Summary)||b.Summary.Length>8000||b.Coverage==null||b.Coverage.Select(c=>c.SectionId).Distinct().Count()!=b.Coverage.Length||b.Coverage.Any(c=>c.Status is not ("interpreted" or "raw" or "unresolved" or "excluded")||string.IsNullOrWhiteSpace(c.Reason))||b.TotalUnits!=source.EvidenceIds.Length||b.SuppliedUnits<0||b.SuppliedUnits>b.TotalUnits||b.Complete!=b.Coverage.All(c=>c.Status is "interpreted" or "raw")||source.Analyzed!=b.Complete||b.Questions==null||b.Calls is <1 or >64)throw new InvalidDataException("Synthèse métier invalide.");
+        }
         var evidence=k.Evidence.Select(x=>x.Id).ToHashSet(); var entities=k.Entities.Select(x=>x.Id).ToHashSet(); var claims=k.Claims.Select(x=>x.Id).ToHashSet();
         if(k.Claims.Any(c=>!entities.Contains(c.EntityId)||c.EvidenceIds.Length==0||c.EvidenceIds.Any(e=>!evidence.Contains(e))||c.RelatedClaimIds.Any(r=>!claims.Contains(r)))) throw new InvalidDataException("Broken knowledge references.");
         var endpoints=entities.Concat(claims).Concat(k.Objects.Select(x=>x.Id)).ToHashSet();
@@ -56,6 +68,7 @@ public sealed class Workspace(string root)
     }
     public void Save(Knowledge k)
     {
+        if(Config.BusinessMode&&k.Projects.Count>1)throw new InvalidDataException("Un workspace ne contient qu'un projet. Créez un autre workspace pour un autre projet.");
         Validate(k);
         k = k with { Sources=k.Sources.OrderBy(x=>x.Id).ToList(), Entities=k.Entities.OrderBy(x=>x.Id).ToList(), Evidence=k.Evidence.OrderBy(x=>x.Id).ToList(), Claims=k.Claims.OrderBy(x=>x.Id).ToList(), Reports=k.Reports.OrderBy(x=>x.Id).ToList() };
         if(IsModern)new MemoryStore(this).Publish(k with{Version=2});else Json.Write(StatePath,k);
@@ -142,7 +155,8 @@ public sealed class Workspace(string root)
     public void ConfigureSource(string id,string root,string selectedPath,SourceDescriptor descriptor)
     {
         SourceIdentifier.Validate(id);
-        descriptor.Validate();
+        descriptor.Validate(Config.BusinessMode);
+        if(Config.BusinessMode&&BusinessInterview.Profile(Load()) is {} project&&descriptor.Context.Project!=project.Name)throw new ArgumentException("Cette source appartient au projet du workspace : "+project.Name);
         root=Path.GetFullPath(root);selectedPath=Path.GetFullPath(selectedPath);
         if(!Directory.Exists(root)||!SourceSetup.Under(selectedPath,root))throw new ArgumentException("Chemin hors de la source.");
         using var gate=Lock();var config=Config;var bindings=Bindings();

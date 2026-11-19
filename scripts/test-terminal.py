@@ -132,6 +132,7 @@ print(json.dumps({'type':'result','exitCode':0}))
         fixture.chmod(0o700)
         config_path = kb / "bip.json"
         config = json.loads(config_path.read_text(encoding="utf-8"))
+        config["businessMode"] = False  # Explicit regression for workspaces using the previous workflow.
         config["copilotExecutable"] = str(fixture)
         config_path.write_text(json.dumps(config), encoding="utf-8")
         # The old location may be unusable (for example under a synced workspace).
@@ -246,6 +247,7 @@ print(json.dumps({'type':'result','exitCode':0}))
         assert {str(p.relative_to(kb)): p.read_bytes() for p in (kb / "memory").rglob("*.json")} == memory_before
         assert cli("search", "reliquat")["hits"]
         local_file.write_text(original, encoding="utf-8")
+        config["businessMode"] = False  # Explicit regression for workspaces using the previous workflow.
         config["copilotExecutable"] = str(fixture)
         config_path.write_text(json.dumps(config), encoding="utf-8")
         analyzed = cli("--ingest", local_file)

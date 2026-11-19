@@ -1,3 +1,21 @@
+# Validation — bip-kb 0.5.0
+
+Vérifications du 19 novembre 2026 sous Linux, .NET SDK 10.0.404. Cette livraison ajoute le premier parcours de business analyste ; les conceptions complètes restent des cibles, pas une déclaration de validation métier.
+
+- Suite xUnit : **282 tests réussis, 6 ignorés** (3 spécifiques Windows et 3 nécessitant un Copilot authentifié), aucune défaillance.
+- Script PowerShell d’installation exécuté : restauration verrouillée, compilation sans avertissement, tests, paquet Release et mise à jour effective de l’outil de 0.4.7 vers 0.5.0. Le paquet final est aussi installé dans un emplacement de vérification isolé.
+- Nouveau scénario `scripts/test-business.py` : entretien avec provenance et confirmation, qualification, Excel analysé en un échange sur la petite fixture, réingestion sans nouvel appel, synonymes métier, contexte et MCP sans cache matérialisé. Copilot est **simulé** ; les trois appels du scénario correspondent au cadrage, à la qualification et à l’analyse.
+- Régressions installées de terminal et d’exploration guidée : SQL/XLS/XLSX/C#/Draw.io/image, reprise, export/import et interface locale.
+- Tests nouveaux : réponses humaines conservées malgré une panne, correction et révision concurrente, refus d’un second projet, conservation des décisions, citations entre échanges, rejet d’une preuve inventée, rôles mixtes, priorité aux fiches face à 1 000 lignes brutes, bornage du cadrage transmis aux recherches et preuves techniques par déclaration/instruction.
+
+Le test en processus externe contrôle JSONL, Unicode, stdin, une nouvelle tentative bornée après une référence invalide et les restrictions d’outils. Il ne mesure pas les capacités d’un modèle réel. La configuration CI exécute les tests et le scénario installé sur Windows/Linux ; les résultats ci-dessus sont ceux obtenus localement sous Linux.
+
+Le vrai `doctor --live` a été tenté dans le cloud et a échoué avec un code de sortie 1. La qualité des fiches sur le corpus professionnel, la lecture native d’Excel et la latence sur le poste utilisateur ne sont **pas déclarées validées**. Le lecteur structuré Excel est le mode par défaut ; le test authentifié `AuthenticatedBusinessFramingAndExcelHaveSourcedFindings` est disponible lorsque `BIP_KB_LIVE_TESTS=1` et la CLI fonctionne réellement.
+
+Voir le [guide métier et ses limites](business-analyst-guide.md). La priorisation automatique des grands dépôts, le rendu visuel Draw.io et l’invalidation fine par dépendances du cadrage restent à réaliser.
+
+---
+
 # Validation — bip-kb 0.3.0
 
 Vérifications réalisées le 15 novembre 2026 dans l'environnement Linux avec .NET SDK 10.0.404. Cette page distingue les mécanismes testés de la validation métier à effectuer avec Copilot sur le poste professionnel.

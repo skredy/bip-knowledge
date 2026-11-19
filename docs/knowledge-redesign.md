@@ -1,6 +1,6 @@
 # Refonte : compréhension métier par Copilot et recherche sourcée
 
-**Statut : proposition de refonte issue de la revue du 19 novembre 2026. Ce document décrit la cible ; ces nouvelles capacités ne sont pas encore implémentées.** Revue du code au commit `ebbff27` (0.4.7). Les mesures précédentes sur des identifiants synthétiques ne valident pas la rapidité d'une recherche métier réelle.
+**Statut : cible issue de la revue du 19 novembre 2026 ; premier parcours livré en 0.5.0.** Le [guide métier](business-analyst-guide.md) distingue le fonctionnement implémenté des capacités encore à valider ou développer. Revue du code au commit `ebbff27` (0.4.7). Les mesures précédentes sur des identifiants synthétiques ne valident pas la rapidité d'une recherche métier réelle.
 
 Le besoin confirmé est double : les appels MCP prennent trop de temps et Copilot doit multiplier les recherches pour obtenir une réponse utile. La cible est un business analyste doté d'une mémoire vérifiable : comprendre l'activité, l'existant, la transformation souhaitée et les décisions. Le code constitue une source d'observation parmi d'autres ; la préparation d'un développement est un usage de la connaissance métier.
 

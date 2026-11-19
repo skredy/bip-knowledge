@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings>
-    <PackAsTool>true</PackAsTool><IsPackable>true</IsPackable><PackageReadmeFile>README.md</PackageReadmeFile><ToolCommandName>bip-kb</ToolCommandName><PackageId>BipKb</PackageId><Version>0.4.7</Version>
-    <Description>Local evidence-backed technical knowledge with Copilot CLI.</Description>
+    <PackAsTool>true</PackAsTool><IsPackable>true</IsPackable><PackageReadmeFile>README.md</PackageReadmeFile><ToolCommandName>bip-kb</ToolCommandName><PackageId>BipKb</PackageId><Version>0.5.0</Version>
+    <Description>Local evidence-backed business analysis with Copilot CLI.</Description>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
   <ItemGroup>

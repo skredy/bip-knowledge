@@ -8,7 +8,7 @@ public sealed class McpIndexUnavailableException(string message):InvalidOperatio
 /// <summary>Published, transactional read projection. Never opens the materialized knowledge on a read.</summary>
 public sealed class McpIndex : IDisposable
 {
-    public const string Version="1";
+    public const string Version="2";
     public const string PrepareMessage="Index MCP absent, ancien ou obsolète. Exécutez bip-kb reindex --workspace <chemin-de-votre-base> dans un terminal, puis réessayez. Aucune réingestion ni analyse Copilot nécessaire.";
     public SqliteConnection Db {get;}
     public SqliteTransaction Transaction {get;}

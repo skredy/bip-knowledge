@@ -6,26 +6,29 @@ namespace BipKb;
 
 public static class TechnicalExtraction
 {
-    public static (List<TechnicalObject> Objects,List<KnowledgeRelation> Relations) Read(byte[] bytes,string extension,string source,SourceContext context,Evidence[] proofs)
+    public static (List<TechnicalObject> Objects,List<KnowledgeRelation> Relations) Read(byte[] bytes,string extension,string source,SourceContext context,Evidence[] proofs,bool precise=false)
     {
         if(extension is not ".sql" and not ".cs")return ([],[]);
         using var reader=new StreamReader(new MemoryStream(bytes),System.Text.Encoding.UTF8,true);
         var text=reader.ReadToEnd();
+        var currentProofs=proofs;
+        void At(int line){if(precise)currentProofs=proofs.Where(e=>e.Locator.StartsWith("line:"+line+";",StringComparison.Ordinal)).ToArray();}
         var objects=new Dictionary<string,TechnicalObject>();var edges=new Dictionary<string,KnowledgeRelation>();
         string Add(string name,string kind,string? parent=null)
         {
             var id=Json.Hash(source+"|"+context.Scope+"|"+kind+"|"+name);
-            var evidence=proofs.Select(e=>e.Id).ToArray();
+            var evidence=currentProofs.Select(e=>e.Id).ToArray();
             if(objects.TryGetValue(id,out var previous))evidence=previous.EvidenceIds.Concat(evidence).Distinct().ToArray();
             objects[id]=new(id,name,kind,evidence,parent,source,context.Project,context.Domain);return id;
         }
         void Link(string a,string b,RelationKind kind,KnowledgeOrigin origin=KnowledgeOrigin.Extracted)
-        {var id=Json.Hash(a+"|"+kind+"|"+b);edges[id]=new(id,a,b,kind,proofs.Select(e=>e.Id).ToArray(),origin);}
+        {var id=Json.Hash(a+"|"+kind+"|"+b);var ids=currentProofs.Select(e=>e.Id).Concat(edges.TryGetValue(id,out var previous)?previous.EvidenceIds:[]).Distinct().ToArray();edges[id]=new(id,a,b,kind,ids,origin);}
         if(extension==".sql")
         {
             var parser=new TSql160Parser(true);var fragment=parser.Parse(new StringReader(text),out _);
             if(fragment is TSqlScript script)foreach(var statement in script.Batches.SelectMany(b=>b.Statements))
             {
+                At(statement.StartLine);
                 var owner=statement switch{CreateTableStatement table=>Add(table.SchemaObjectName.ToStringName(),"table"),CreateProcedureStatement proc=>Add(proc.ProcedureReference.Name.ToStringName(),"procedure"),AlterProcedureStatement proc=>Add(proc.ProcedureReference.Name.ToStringName(),"procedure"),_=>Add(source+":"+proofs.FirstOrDefault()?.RelativePath+":"+statement.StartLine,"sql-statement")};
                 if(statement is CreateTableStatement t)foreach(var column in t.Definition.ColumnDefinitions){var c=Add(t.SchemaObjectName.ToStringName()+"."+column.ColumnIdentifier.Value,"column",owner);Link(c,owner,RelationKind.References);}
                 var collector=new SqlReferences();statement.Accept(collector);
@@ -44,10 +47,12 @@ public static class TechnicalExtraction
             var model=compilation.GetSemanticModel(tree);
             foreach(var type in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
             {
+                At(type.GetLocation().GetLineSpan().StartLinePosition.Line+1);
                 var symbol=model.GetDeclaredSymbol(type);var name=symbol?.ToDisplayString()??type.Identifier.ValueText;var owner=Add(name,"type");
                 if(type.BaseList!=null)foreach(var basis in type.BaseList.Types)Link(owner,Add(basis.Type.ToString(),"type-reference"),RelationKind.Implements,KnowledgeOrigin.Inferred);
                 foreach(var member in type.Members)
                 {
+                    At(member.GetLocation().GetLineSpan().StartLinePosition.Line+1);
                     var declared=model.GetDeclaredSymbol(member);if(declared==null)continue;var id=Add(declared.ToDisplayString(),member is MethodDeclarationSyntax?"method":"member",owner);Link(owner,id,RelationKind.References);
                     if(member is MethodDeclarationSyntax method)Link(id,Add(method.ReturnType.ToString(),"type-reference"),RelationKind.Returns);
                     foreach(var call in member.DescendantNodes().OfType<InvocationExpressionSyntax>())

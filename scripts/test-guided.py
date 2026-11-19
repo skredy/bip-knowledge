@@ -42,6 +42,7 @@ def main():
         run("init")
         config_file = kb / "bip.json"
         config = json.loads(config_file.read_text())
+        config["businessMode"] = False  # Explicit regression for workspaces using the previous workflow.
         config["copilotExecutable"] = str(fixture)
         config_file.write_text(json.dumps(config))
         descriptor = root / "context.json"

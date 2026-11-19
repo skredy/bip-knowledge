@@ -41,7 +41,7 @@ public sealed record SourceContext(string Project, string Domain, string Descrip
 }
 public sealed record SourceDescriptor(SourceRole Role, SourceContext Context)
 {
-    public void Validate(){if(Role==SourceRole.Unknown||!Enum.IsDefined(Role))throw new ArgumentException("Rôle requis : legacy|target|current."); if(Context==null)throw new ArgumentException("Contexte absent.");Context.Validate();}
+    public void Validate(bool allowUnknown=false){if((Role==SourceRole.Unknown&&!allowUnknown)||!Enum.IsDefined(Role))throw new ArgumentException("Rôle requis : legacy|target|current."); if(Context==null)throw new ArgumentException("Contexte absent.");Context.Validate();}
 }
 public sealed record SourceDefinition(string Id, SourceRole Role, string[]? ExcelSheets=null, SourceContext? Context=null, SortedDictionary<string,SourceDescriptor>? Overrides=null)
 {
@@ -55,6 +55,8 @@ public sealed record SourceDefinition(string Id, SourceRole Role, string[]? Exce
 }
 public sealed record Settings
 {
+    public bool BusinessMode { get; init; }
+    public bool NativeDocuments { get; init; }
     public int Version { get; init; } = 1;
     public List<SourceDefinition> Sources { get; init; } = [];
     public string[] Exclusions { get; init; } = ["**/bin/**", "**/obj/**", "**/node_modules/**", "**/.git/**", "**/.local/**"];
@@ -84,12 +86,14 @@ public sealed record Finding
     public bool Uncertain { get; init; }
     public string? QualifiedName { get; init; }
     public string[] Conditions { get; init; } = [];
+    public string[] Aliases { get; init; } = [];
+    public SourceRole? Role { get; init; }
 }
 public sealed record Analysis(List<Finding> Findings);
 public sealed record Claim(string Id, string EntityId, string Statement, Contribution Contribution, string[] EvidenceIds,
     string[] RelatedClaimIds, SourceRole Role, bool NeedsReview, bool Obsolete = false, SourceContext? Context = null, KnowledgeOrigin Origin = KnowledgeOrigin.Extracted, KnowledgeState State = KnowledgeState.Proposed, string[]? Conditions = null);
 public sealed record SourceVersion(string Id, string SourceId, string RelativePath, string Hash, string CacheKey,
-    SourceRole Role, string[] EvidenceIds, string[] ClaimIds, bool Active, string[] Warnings, SourceContext? Context = null, bool Analyzed = true, ExplorationSummary? Exploration = null);
+    SourceRole Role, string[] EvidenceIds, string[] ClaimIds, bool Active, string[] Warnings, SourceContext? Context = null, bool Analyzed = true, ExplorationSummary? Exploration = null, BusinessSummary? Business = null);
 public sealed record Decision(string Id, string ClaimId, string Action, string Reason, string Actor, string[] Supersedes, DateTimeOffset At, string EvidenceFingerprint = "");
 public sealed record IngestionReport(string Id, DateTimeOffset At, string SourceId, int Files, int Unchanged,
     Dictionary<Contribution, int> Counts, string[] Warnings, string[] ClaimIds, string Mode = "analysis", int UnanalyzedFiles = 0);
@@ -117,14 +121,14 @@ public interface IAnalyzer
 
 public enum KnowledgeOrigin { Extracted, Inferred, Declared }
 public enum KnowledgeState { Proposed, Accepted, Rejected, Superseded, Reexamine }
-public enum RelationKind { Calls, Reads, Writes, Returns, References, Implements, MapsTo, Replaces, Contradicts, DependsOn }
+public enum RelationKind { Calls, Reads, Writes, Returns, References, Implements, MapsTo, Replaces, Contradicts, DependsOn, Performs, Uses, Produces, Constrains, Changes }
 public sealed record TechnicalObject(string Id, string Name, string Kind, string[] EvidenceIds, string? Parent = null, string? SourceId = null, string? Project = null, string? Domain = null, bool Active = true);
 public sealed record KnowledgeRelation(string Id, string From, string To, RelationKind Kind, string[] EvidenceIds, KnowledgeOrigin Origin = KnowledgeOrigin.Extracted, KnowledgeState State = KnowledgeState.Proposed);
 public sealed record DomainProfile(string Id, string Name, string Responsibility, string[] RelatedDomains);
 public sealed record AuthorityRule(string SourceId, string Topic, string Reason);
 public sealed record GlossaryEntry(string Term, string[] Aliases, string Definition, string? Domain = null);
-public sealed record ProjectProfile(string Id, string Name, string Objective, string Architecture, string[] Systems, string[] Conventions, DomainProfile[] Domains, AuthorityRule[] Authorities, GlossaryEntry[] Glossary);
-public sealed record SearchHit(string Id, string Kind, string Title, string Text, string? Project, string? Domain, SourceRole? Role, string[] EvidenceIds, double Score, string[] Reasons, KnowledgeState State, bool Historical = false, KnowledgeOrigin Origin = KnowledgeOrigin.Extracted, SourceStatus? SourceStatus = null, string[]? Conditions = null);
+public sealed record ProjectProfile(string Id, string Name, string Objective, string Architecture, string[] Systems, string[] Conventions, DomainProfile[] Domains, AuthorityRule[] Authorities, GlossaryEntry[] Glossary, ConfirmedBrief? Brief = null);
+public sealed record SearchHit(string Id, string Kind, string Title, string Text, string? Project, string? Domain, SourceRole? Role, string[] EvidenceIds, double Score, string[] Reasons, KnowledgeState State, bool Historical = false, KnowledgeOrigin Origin = KnowledgeOrigin.Extracted, SourceStatus? SourceStatus = null, string[]? Conditions = null, string[]? SearchTerms = null);
 public sealed record SearchQuery(string Text, string? Project = null, string? Domain = null, SourceRole? Role = null, string Intent = "general", int Limit = 20, int Depth = 2, bool IncludeHistorical = false);
 public sealed record SearchResponse(string Revision, SearchHit[] Hits, string[] Warnings, double Milliseconds);
 public sealed record OpenQuestion(string Id, string Project, string Text, string[] EvidenceIds, string? Answer = null, string? Actor = null);

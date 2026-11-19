@@ -39,6 +39,7 @@ public sealed class IngestionProgress : IAsyncDisposable
         lock(gate)
         {
             if(disposed||outputUnavailable||output==null)return;
+            if(string.IsNullOrWhiteSpace(message)){stage=null;return;}
             // Filenames can contain terminal control characters. Keep feedback on one plain line.
             stage=new string(message.Where(c=>!char.IsControl(c)&&char.GetUnicodeCategory(c)!=UnicodeCategory.Format).Take(300).ToArray());
             stageElapsed.Restart();Write(stage);

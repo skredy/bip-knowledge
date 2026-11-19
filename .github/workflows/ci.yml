@@ -16,6 +16,9 @@ jobs:
       - name: Build, test, pack and install through the user script
         shell: pwsh
         run: ./scripts/install.ps1 -ToolPath (Join-Path $env:RUNNER_TEMP 'bip-kb tools')
+      - name: Installed business analyst workflow
+        shell: pwsh
+        run: python scripts/test-business.py --tool (Join-Path $env:RUNNER_TEMP ('bip-kb tools/bip-kb' + $(if ($IsWindows) { '.exe' } else { '' })))
       - name: Interactive terminal regression
         if: runner.os == 'Linux'
         run: python3 scripts/test-terminal.py

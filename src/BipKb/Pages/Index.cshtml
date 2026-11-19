@@ -1,19 +1,25 @@
 @page
 @model IndexModel
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>bip-kb — connaissance technique</title>
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>bip-kb — connaissance métier</title>
 <style>body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#182438;background:#f5f7fa}nav{display:flex;gap:1.3rem;flex-wrap:wrap;margin:2rem 0}a{color:#1452a0}article,section{background:white;border:1px solid #d9e0e8;border-radius:8px;padding:1.2rem;margin:1rem 0}input,select,textarea,button{font:inherit;padding:.5rem;margin:.3rem}textarea{width:90%}button{background:#1452a0;color:white;border:0;border-radius:4px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f4f8;padding:1rem}small{overflow-wrap:anywhere}.warning{color:#8a3500}label{display:block}h1{margin-bottom:0}</style></head><body>
 <h1>bip-kb</h1><p>Des connaissances reliées à leurs preuves.</p>
-<nav><a href="/?view=search">Rechercher</a><a href="/?view=ingestions">Ingestions</a><a href="/?view=review">Arbitrages</a><a href="/?view=projects">Projets</a><a href="/?view=tasks">Dossiers</a><a href="/?view=questions">Questions et mémoire</a></nav>
+<nav><a href="/?view=search">Rechercher</a><a href="/?view=ingestions">Ingestions</a><a href="/?view=review">Arbitrages</a><a href="/?view=projects">Projet</a><a href="/?view=tasks">Dossiers</a><a href="/?view=questions">Questions et mémoire</a></nav>
 @if(Model.Error!=null){<p class="warning">@Model.Error</p>}
 @if(Model.View=="projects"){
 <h2>Contexte global</h2>
-<p>Configurer avec <code>bip-kb project setup</code> ou un fichier de profil partagé.</p>
+<p>Configurer avec <code>bip-kb project setup</code> pour échanger avec Copilot et confirmer le cadrage.</p>
 @foreach(var project in Model.Knowledge.Projects){<article><h3>@project.Name</h3><p>@project.Objective</p><p>@project.Architecture</p><p>Conventions : @string.Join(" ; ",project.Conventions)</p>
+@if(project.Brief is {} brief){
+<h4>Cadrage métier</h4><p>@brief.Content.Scope</p>
+@foreach(var item in brief.Content.Items){<p><strong>@item.Topic</strong> — @item.Text <small>(@item.Origin)</small></p>}
+<p>Reformulation confirmée par @brief.Actor le @brief.At.ToString("u"). Ces déclarations ne sont pas des preuves documentaires.</p>
+@foreach(var question in brief.Content.OpenQuestions){<p class="warning">À éclaircir : @question</p>}
+}
 @foreach(var domain in project.Domains){<p><strong>@domain.Name</strong> — @domain.Responsibility ; liens : @string.Join(", ",domain.RelatedDomains)</p>}
 @foreach(var rule in project.Authorities){<p>Référence pour @rule.Topic : @rule.SourceId — @rule.Reason</p>}
 </article>}
 }else if(Model.View=="tasks"){
-<h2>Dossiers de travail</h2><form method="post" asp-page-handler="Task"><label>Projet <input name="project" required></label><label>Objectif <textarea name="goal" required maxlength="4000"></textarea></label><button>Créer un dossier</button></form>
+<h2>Dossiers de travail</h2><form method="post" asp-page-handler="Task">@if(Model.Knowledge.Projects.Count==1){<input type="hidden" name="project" value="@Model.Knowledge.Projects[0].Name">}else{<label>Projet <input name="project" required></label>}<label>Objectif <textarea name="goal" required maxlength="4000"></textarea></label><button>Créer un dossier</button></form>
 @foreach(var task in Model.Knowledge.Tasks){<article><a href="/?view=task&amp;id=@task.Id">@task.Goal</a><p>@task.Project — @task.Turns.Count échanges</p></article>}
 }else if(Model.View=="task" && Model.SelectedTask is {} selected){
 <h2>@selected.Goal</h2><p>@selected.Project — @(Model.Stale?"À actualiser : la mémoire a changé":"Dossier ouvert")</p>
@@ -23,18 +29,27 @@
 <p>Une réponse de conversation ne devient pas automatiquement une connaissance validée.</p>
 }else if(Model.View=="questions"){
 <h2>Questions ouvertes et déclarations humaines</h2>
-<form method="post" asp-page-handler="Remember"><label>Projet <input name="project" required></label><label>À retenir <textarea name="declaration" required maxlength="4000"></textarea></label><label>Auteur <input name="actor" required></label><label><input type="checkbox" name="confirm" value="true" required>Je confirme cette déclaration pour la mémoire partagée</label><button>Enregistrer</button></form>
+<form method="post" asp-page-handler="Remember">@if(Model.Knowledge.Projects.Count==1){<input type="hidden" name="project" value="@Model.Knowledge.Projects[0].Name">}else{<label>Projet <input name="project" required></label>}<label>À retenir <textarea name="declaration" required maxlength="4000"></textarea></label><label>Auteur <input name="actor" required></label><label><input type="checkbox" name="confirm" value="true" required>Je confirme cette déclaration pour la mémoire partagée</label><button>Enregistrer</button></form>
 @foreach(var question in Model.Knowledge.Questions){<article><h3>@question.Text</h3><p>@question.Project</p>
 @if(question.Answer!=null){<p>@question.Answer — @question.Actor</p>}
 <form method="post" asp-page-handler="Answer"><input type="hidden" name="id" value="@question.Id"><label>Réponse ou correction <textarea name="answer" required maxlength="4000"></textarea></label><label>Auteur <input name="actor" required></label><label><input type="checkbox" name="confirm" value="true" required>Confirmer l'enregistrement</label><button>Répondre</button></form></article>}
 }else if(Model.View=="ingestions"){
 <h2>Ingestions publiées</h2>
 @foreach(var report in Model.Knowledge.Reports.OrderByDescending(r=>r.At)){
-<section><h3>@report.SourceId — @report.At.ToString("u")</h3><small>@report.Id</small><p>@(report.Mode == "index" ? "Indexation locale" : report.Mode == "guided" ? "Exploration guidée" : "Analyse par lots") : @report.Files fichiers, @report.Unchanged inchangés. @report.UnanalyzedFiles fichiers avec analyse absente ou partielle.</p>
+<section><h3>@report.SourceId — @report.At.ToString("u")</h3><small>@report.Id</small><p>@(report.Mode == "index" ? "Indexation locale" : report.Mode == "business" ? "Analyse métier" : report.Mode == "guided" ? "Exploration guidée" : "Analyse par lots") : @report.Files fichiers, @report.Unchanged inchangés. @report.UnanalyzedFiles fichiers avec analyse absente ou partielle.</p>
 @foreach(var count in report.Counts.Where(c=>c.Value>0)){<span>@count.Key : @count.Value · </span>}
 @foreach(var warning in report.Warnings){<p class="warning">@warning</p>}
 </section>}
 <h2>Compréhension des sources</h2>
+@foreach(var source in Model.Knowledge.Sources.Where(s=>s.Active&&s.Business!=null)){
+var business=source.Business!;
+<article><h3>@source.SourceId/@source.RelativePath</h3><p>@(business.Complete?"Sections interprétées ou conservées après lecture":"Analyse partielle")</p>
+<p>Interprétation Copilot à vérifier avec les preuves.</p><pre>@business.Summary</pre>
+@foreach(var question in business.Questions){<p class="warning">@question</p>}
+<details><summary>Couverture et limites</summary>
+@foreach(var coverageItem in business.Coverage){<p>@(coverageItem.Name??coverageItem.SectionId) : @coverageItem.Status — @coverageItem.Reason</p>}
+</details></article>}
+
 @foreach(var source in Model.Knowledge.Sources.Where(s=>s.Active&&s.Exploration!=null)){
 var exploration=source.Exploration!;
 <article><h3>@source.SourceId/@source.RelativePath</h3><p>@(exploration.Complete?"Unités examinées":"Analyse partielle") — @exploration.AnalyzedUnits/@exploration.TotalUnits unités analysées ; @exploration.ExcludedUnits exclues, @exploration.UnresolvedUnits non résolues, @exploration.EmptyUnits vides.</p>
@@ -44,7 +59,7 @@ var exploration=source.Exploration!;
 @foreach(var range in exploration.Coverage){<p>Unités @range.Start à @(range.Start+range.Count-1) : @range.Status — @range.Reason</p>}
 </details></article>}
 }else{
-@if(Model.View=="search"){<form method="get"><label>Rechercher une entité ou une règle <input name="q" value="@Model.Query"></label><label>Projet (si plusieurs) <input name="project" value="@Model.Project"></label><button>Rechercher</button></form>}
+@if(Model.View=="search"){<form method="get"><label>Rechercher une entité ou une règle <input name="q" value="@Model.Query"></label>@if(Model.Knowledge.Projects.Count>1){<label>Projet <input name="project" value="@Model.Project"></label>}<button>Rechercher</button></form>}
 @if(Model.View=="review"){<h2>Décisions à examiner</h2>}
 @foreach(var hit in Model.Hits){<article><h2><a href="/?view=detail&amp;id=@hit.Id&amp;project=@Uri.EscapeDataString(hit.Project??"")">@hit.Title</a></h2><p>@hit.Kind · @hit.Project / @hit.Domain · @hit.Role · @hit.State · @hit.Origin · @hit.SourceStatus</p><pre>@hit.Text</pre><small>Retrouvé par : @string.Join(" ; ",hit.Reasons)</small></article>}
 @if(Model.Claims.Count==0 && Model.Hits.Length==0){<p>Aucun résultat. Importez vos sources ou précisez votre recherche.</p>}

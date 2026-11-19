@@ -1,10 +1,12 @@
 # Utiliser bip-kb avec Copilot via MCP
 
-Le MCP permet à Copilot de consulter votre base bip-kb pendant que vous travaillez dans un dépôt applicatif. Pour préparer un endpoint, Copilot peut rechercher l'étude Excel, les correspondances SQL et les exemples C# avant de proposer une implémentation.
+Le MCP permet à Copilot de consulter le cadrage métier, les processus, règles, exceptions, décisions et preuves de votre projet. Les références SQL et C# peuvent éclairer les comportements observés et leur transformation.
+
+En 0.5.0, un nouveau workspace contient un seul projet. Appelez `project` avec `{}` pour son cadrage, puis `context` avec une question métier pour obtenir un dossier sourcé. `questions` accepte aussi `{}`. Ces opérations ne lancent pas un second Copilot. Voir le [guide métier](business-analyst-guide.md).
 
 Le serveur consulte la dernière révision publiée de la base. Il ne lance pas d'ingestion, d'analyse Copilot supplémentaire ou d'arbitrage. L'indexation locale rend les extraits recherchables ; `--analyze` ajoute une compréhension proposée par Copilot, avec preuves et couverture. Une ingestion encore en cours n'est pas visible comme une révision terminée.
 
-## Préparer l'index après la mise à jour vers 0.4.6
+## Préparer l’index après une mise à jour
 
 Sur une base existante, lancez une fois depuis un terminal :
 

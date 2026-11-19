@@ -52,7 +52,7 @@ public sealed class SearchEngine(Workspace workspace)
             if(effective.TryGetValue(c.Id,out var ds)){state=ds.Select(d=>d.Action).Distinct().Count()>1?KnowledgeState.Reexamine:ds[0].Action=="reject"?KnowledgeState.Rejected:KnowledgeState.Accepted;}
             if(effective.TryGetValue(c.Id,out var reviewed)&&reviewed.Any(d=>d.EvidenceFingerprint!=Json.Hash(string.Join("",c.EvidenceIds.Where(activeEvidence.Contains).Order()))))state=KnowledgeState.Reexamine;
             if(replaced.Contains(c.Id)&&state!=KnowledgeState.Reexamine)state=KnowledgeState.Superseded;
-            docs.Add(new(c.Id,"claim",entities[c.EntityId].Name,c.Statement,c.Context?.Project,c.Context?.Domain,c.Role,c.EvidenceIds,0,[],state,c.Obsolete,c.Origin,c.Context?.Status,c.Conditions));
+            docs.Add(new(c.Id,"claim",entities[c.EntityId].Name,c.Statement,c.Context?.Project,c.Context?.Domain,c.Role,c.EvidenceIds,0,[],state,c.Obsolete,c.Origin,c.Context?.Status,c.Conditions,entities[c.EntityId].Aliases));
         }
         foreach(var e in k.Evidence)
         {
@@ -106,7 +106,7 @@ public sealed class SearchEngine(Workspace workspace)
             writeDoc.Parameters["$project"].Value=(object?)d.Project??DBNull.Value;writeDoc.Parameters["$domain"].Value=(object?)d.Domain??DBNull.Value;
             writeDoc.Parameters["$role"].Value=(object?)d.Role?.ToString()??DBNull.Value;writeDoc.Parameters["$old"].Value=d.Historical?"1":"0";
             writeDoc.Parameters["$state"].Value=d.State.ToString();writeDoc.Parameters["$body"].Value=body;writeDoc.Parameters["$title"].Value=d.Title;writeDoc.ExecuteNonQuery();
-            writeSearch.Parameters["$id"].Value=d.Id;writeSearch.Parameters["$title"].Value=d.Title;writeSearch.Parameters["$text"].Value=d.Text;writeSearch.ExecuteNonQuery();hashes.Remove(d.Id);
+            writeSearch.Parameters["$id"].Value=d.Id;writeSearch.Parameters["$title"].Value=d.Title;writeSearch.Parameters["$text"].Value=d.Text+" "+string.Join(" ",d.SearchTerms??[]);writeSearch.ExecuteNonQuery();hashes.Remove(d.Id);
         }
         progress?.Invoke($"Index local — documents {processed}/{docs.Count} ; retrait des entrées obsolètes");
         foreach(var id in hashes.Keys){ct.ThrowIfCancellationRequested();deleteSearch.Parameters["$id"].Value=id;deleteSearch.ExecuteNonQuery();deleteDoc.Parameters["$id"].Value=id;deleteDoc.ExecuteNonQuery();}
@@ -171,6 +171,7 @@ public sealed class SearchEngine(Workspace workspace)
         using var cmd=db.CreateCommand();cmd.Transaction=transaction;
         cmd.CommandText="SELECT body FROM profiles";var profiles=new List<ProjectProfile>();using(var r=cmd.ExecuteReader()){while(r.Read())profiles.Add(Json.Read<ProjectProfile>(r.GetString(0)));}
         var profile=query.Project==null?(profiles.Count==1?profiles[0]:null):profiles.SingleOrDefault(p=>p.Id==query.Project||p.Name.Equals(query.Project,StringComparison.OrdinalIgnoreCase));
+        var business=profile?.Brief!=null;
         var project=profile?.Name??query.Project;
         if(query.Project==null){cmd.CommandText="SELECT DISTINCT project FROM docs WHERE project IS NOT NULL";var names=new List<string>();using(var r=cmd.ExecuteReader()){while(r.Read())names.Add(r.GetString(0));}names=names.Concat(profiles.Select(p=>p.Name)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();if(names.Count>1)throw new ArgumentException("Several projects are indexed; select --project.");project=names.SingleOrDefault();}
         var expanded=query.Text;
@@ -178,6 +179,7 @@ public sealed class SearchEngine(Workspace workspace)
             if((term.Domain==null||query.Domain==null||term.Domain==query.Domain)&&term.Aliases.Append(term.Term).Any(a=>Normalize(query.Text).Contains(Normalize(a))))expanded+=" "+term.Term+" "+string.Join(" ",term.Aliases);
         var terms=Terms(expanded);var hits=new Dictionary<string,SearchHit>();var allowed=query.Domain==null?null:Projects.Related(profile,query.Domain,query.Depth);
         bool Allowed(SearchHit h)=> (project==null||h.Project?.Equals(project,StringComparison.OrdinalIgnoreCase)==true)&&(query.IncludeHistorical||(!h.Historical&&h.State is not KnowledgeState.Rejected and not KnowledgeState.Superseded))&&(query.Role==null||h.Role==query.Role||h.Kind=="declaration")&&(allowed==null||h.Kind=="declaration"||h.Domain!=null&&allowed.Contains(h.Domain));
+        var authorityCache=new Dictionary<(string,string),bool>();
         void Add(SearchHit h,double score,string reason)
         {
             if(!Allowed(h))return;
@@ -189,20 +191,21 @@ public sealed class SearchEngine(Workspace workspace)
             else hits[h.Id]=h with{Score=score,Reasons=h.Reasons.Where(r=>!r.StartsWith("source:")).Append(reason).ToArray()};
         }
         // Authority checks use indexed source labels, not the entire corpus.
-        bool AuthorityEvidence(string id,string source){using var c=db.CreateCommand();c.Transaction=transaction;c.CommandText="SELECT body FROM docs WHERE id=$id";c.Parameters.AddWithValue("$id",id);var body=c.ExecuteScalar() as string;return body!=null&&Json.Read<SearchHit>(body).Reasons.Contains("source:"+source);}
+        bool AuthorityEvidence(string id,string source){if(authorityCache.TryGetValue((id,source),out var cached))return cached;using var c=db.CreateCommand();c.Transaction=transaction;c.CommandText="SELECT body FROM docs WHERE id=$id";c.Parameters.AddWithValue("$id",id);var body=c.ExecuteScalar() as string;return authorityCache[(id,source)]=body!=null&&Json.Read<SearchHit>(body).Reasons.Contains("source:"+source);}
         cmd.CommandText="SELECT body FROM docs WHERE (id=$q OR title=$q COLLATE NOCASE) AND ($p IS NULL OR project=$p COLLATE NOCASE) LIMIT 100";cmd.Parameters.AddWithValue("$q",query.Text);cmd.Parameters.AddWithValue("$p",(object?)project??DBNull.Value);
         var candidates=new List<SearchHit>();using(var r=cmd.ExecuteReader()){while(r.Read())candidates.Add(Json.Read<SearchHit>(r.GetString(0)));}foreach(var h in candidates)Add(h,20,"exact identifier or name");
         if(terms.Length>0)
         {
-            cmd.Parameters.Clear();cmd.CommandText="SELECT d.body,bm25(search,0,5,1) FROM search JOIN docs d ON d.id=search.id WHERE search MATCH $q AND ($p IS NULL OR d.project=$p COLLATE NOCASE) AND ($old=1 OR (d.historical=0 AND d.state NOT IN ('Rejected','Superseded'))) AND ($domains IS NULL OR d.kind='declaration' OR d.domain IN (SELECT value FROM json_each($domains))) AND ($role IS NULL OR d.role=$role OR d.kind='declaration') ORDER BY bm25(search,0,5,1) LIMIT 200";
+            cmd.Parameters.Clear();cmd.CommandText="SELECT d.body,bm25(search,0,5,1) FROM search JOIN docs d ON d.id=search.id WHERE search MATCH $q AND ($p IS NULL OR d.project=$p COLLATE NOCASE) AND ($old=1 OR (d.historical=0 AND d.state NOT IN ('Rejected','Superseded'))) AND ($domains IS NULL OR d.kind='declaration' OR d.domain IN (SELECT value FROM json_each($domains))) AND ($role IS NULL OR d.role=$role OR d.kind='declaration') ORDER BY CASE WHEN $business=1 AND d.kind='claim' THEN 0 ELSE 1 END,bm25(search,0,5,1) LIMIT 200";
+            cmd.Parameters.AddWithValue("$business",business?1:0);
             cmd.Parameters.AddWithValue("$q",string.Join(" OR ",terms.Select(t=>"\""+t+"\"")));cmd.Parameters.AddWithValue("$p",(object?)project??DBNull.Value);cmd.Parameters.AddWithValue("$old",query.IncludeHistorical?1:0);cmd.Parameters.AddWithValue("$domains",allowed==null?DBNull.Value:Json.Serialize(allowed));cmd.Parameters.AddWithValue("$role",(object?)query.Role?.ToString()??DBNull.Value);
             candidates.Clear();using(var r=cmd.ExecuteReader()){while(r.Read())candidates.Add(Json.Read<SearchHit>(r.GetString(0)));}
-            var rank=0;foreach(var h in candidates)Add(h,10.0/(1+rank++*.05),"lexical / alias match");
+            var rank=0;foreach(var h in candidates)Add(h,10.0/(1+rank++*.05)+(business&&h.Kind=="claim"?4:0),"lexical / alias match");
         }
         var visited=new HashSet<string>();
         for(var depth=0;depth<query.Depth;depth++)
         {
-            var frontier=hits.Values.OrderByDescending(h=>h.Score).Where(h=>!visited.Contains(h.Id)).Take(30).ToArray();
+            var frontier=hits.Values.OrderByDescending(h=>h.Score).Where(h=>!visited.Contains(h.Id)&&(!business||h.Kind!="evidence")).Take(business?8:30).ToArray();
             foreach(var h in frontier)
             {
                 visited.Add(h.Id);cmd.Parameters.Clear();cmd.CommandText="SELECT body,kind FROM (SELECT d.body,'proof' AS kind FROM node_proofs n JOIN proof_members m ON m.set_id=n.set_id JOIN docs d ON d.id=m.proof_id WHERE n.node_id=$id LIMIT 10) UNION ALL SELECT d.body,e.kind FROM edges e JOIN docs d ON d.id=CASE WHEN e.src=$id THEN e.dst ELSE e.src END WHERE e.src=$id OR e.dst=$id UNION ALL SELECT d.body,'proof' FROM proof_members m JOIN node_proofs n ON n.set_id=m.set_id JOIN docs d ON d.id=n.node_id WHERE m.proof_id=$id LIMIT 30";cmd.Parameters.AddWithValue("$id",h.Id);
@@ -213,7 +216,7 @@ public sealed class SearchEngine(Workspace workspace)
         // Reserve room for both primary evidence and structured knowledge; identical text is not independent corroboration.
         var sorted=hits.Values.OrderByDescending(h=>h.Score).ThenBy(h=>h.Id).ToArray();var selected=new List<SearchHit>();var seen=new HashSet<string>();
         foreach(var h in sorted){var key=h.Kind+":"+h.Role+":"+h.Domain+":"+Normalize(h.Text);if(seen.Add(key))selected.Add(h);if(selected.Count==query.Limit)break;}
-        if(selected.Count>0&&!selected.Any(h=>h.Kind=="evidence")&&sorted.FirstOrDefault(h=>h.Kind=="evidence") is {} raw)selected[^1]=raw;
+        if(!business&&selected.Count>0&&!selected.Any(h=>h.Kind=="evidence")&&sorted.FirstOrDefault(h=>h.Kind=="evidence") is {} raw)selected[^1]=raw;
         cmd.Parameters.Clear();cmd.CommandText="SELECT value FROM meta WHERE key='revision'";var revision=(string)cmd.ExecuteScalar()!;
         return new(revision,selected.ToArray(),selected.Count==0?["No result does not prove that a rule is absent."]:[],timer.Elapsed.TotalMilliseconds);
     }

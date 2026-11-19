@@ -21,8 +21,10 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
         path=Path.GetFullPath(path);
         if(!File.Exists(path)&&!Directory.Exists(path))throw new IOException("Source inaccessible; existing knowledge remains unchanged.");
         progress?.Invoke("Préparation de l'ingestion (Ctrl+C pour interrompre et reprendre plus tard)");
-        progress?.Invoke(analyze?(guided?"Mode exploration guidée par Copilot":"Mode analyse par lots avec Copilot"):"Mode indexation locale — aucun appel Copilot ; analyse ciblée avec ask ou --analyze");
-        if(analyze&&guided&&analyzer is not IExplorationAssistant)throw new NotSupportedException("Cet adaptateur ne prend pas en charge l'exploration guidée.");
+        var business=workspace.Config.BusinessMode&&analyze&&guided;
+        progress?.Invoke(business?"Mode business analyste — compréhension du document puis connaissances sourcées":analyze?(guided?"Mode exploration guidée par Copilot":"Mode analyse par lots avec Copilot"):"Mode indexation locale — aucun appel Copilot ; analyse ciblée avec ask ou --analyze");
+        if(business&&analyzer is not IBusinessAssistant)throw new NotSupportedException("Adaptateur métier requis.");
+        if(analyze&&guided&&!business&&analyzer is not IExplorationAssistant)throw new NotSupportedException("Cet adaptateur ne prend pas en charge l'exploration guidée.");
         progress?.Invoke("Chargement de la mémoire locale et des décisions");
         workspace.EnsureWritable();
         var baseline=workspace.SemanticRevision;var configuration=Json.Hash(Json.Serialize(workspace.Config));
@@ -44,7 +46,7 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
         foreach(var file in files)
         {
             var descriptor=definition.Resolve(Path.GetRelativePath(root,file))??throw new ArgumentException("Contexte absent pour "+Path.GetRelativePath(root,file)+". Relancez ingest dans un terminal ou fournissez --context-file.");
-            descriptor.Validate();
+            descriptor.Validate(config.BusinessMode);
         }
         var warnings=new List<string>(); var changed=new List<string>(); var unchanged=0; var counts=Enum.GetValues<Contribution>().ToDictionary(c=>c,c=>0);
         var seen=new HashSet<string>(); var groups=new Dictionary<SourceDescriptor,List<Unit>>();
@@ -64,10 +66,10 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
             if(new FileInfo(file).Length>config.MaxFileBytes)throw new InvalidDataException("File exceeds maxFileBytes: "+relative);
             var bytes=await File.ReadAllBytesAsync(file,ct); if(bytes.Length>config.MaxFileBytes)throw new InvalidDataException("File grew beyond maxFileBytes."); var hash=Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
             var profile=k.Projects.SingleOrDefault(p=>p.Name.Equals(context.Project,StringComparison.OrdinalIgnoreCase));
-            var key=Json.Hash(hash+Extractor.VersionFor(file)+config.AnalysisProfile+Json.Serialize(new{descriptor,definition.ExcelSheets,config.MaxFileBytes,project=profile})+effectiveRole);
+            var key=Json.Hash(hash+Extractor.VersionFor(file)+(config.BusinessMode?BusinessExtraction.Version+BusinessDocuments.Protocol:"")+config.AnalysisProfile+Json.Serialize(new{descriptor,definition.ExcelSheets,config.MaxFileBytes,project=profile})+effectiveRole);
             var previous=k.Sources.SingleOrDefault(s=>s.Active&&s.SourceId==sourceId&&s.RelativePath==relative);
-            var pending=analyze&&guided&&new DocumentExplorer(workspace,(IExplorationAssistant)analyzer).HasPending(sourceId,relative,key,previous);
-            if(!reanalyze&&!pending&&previous?.CacheKey==key&&(!analyze||previous.Analyzed||guided&&previous.Exploration!=null))
+            var pending=business?new BusinessDocuments(workspace,(IBusinessAssistant)analyzer).Pending(sourceId,relative,key,previous):analyze&&guided&&new DocumentExplorer(workspace,(IExplorationAssistant)analyzer).HasPending(sourceId,relative,key,previous);
+            if(!reanalyze&&!pending&&previous?.CacheKey==key&&(!analyze||previous.Analyzed||guided&&(previous.Exploration!=null||previous.Business!=null)))
             {
                 unchanged++;counts[Contribution.None]++;warnings.AddRange(previous.Warnings.Select(w=>relative+": "+w));
                 progress?.Invoke(fileLabel+(previous.Analyzed?" — inchangé, analyse réutilisée":previous.Exploration!=null?" — inchangé, analyse partielle conservée ; --reanalyze pour la réexaminer":" — inchangé, indexation réutilisée"));continue;
@@ -81,15 +83,15 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
             await File.WriteAllBytesAsync(snapshot,bytes,ct);
             progress?.Invoke(fileLabel+" — extraction");
             Extraction extraction;
-            try { extraction=Extractor.Read(snapshot,config.MaxFileBytes,config.Sources.Single(s=>s.Id==sourceId).ExcelSheets); }
+            try { extraction=config.BusinessMode?BusinessExtraction.Read(snapshot,config.MaxFileBytes,definition.ExcelSheets):Extractor.Read(snapshot,config.MaxFileBytes,definition.ExcelSheets); }
             finally { File.Delete(snapshot); }
             warnings.AddRange(extraction.Warnings.Select(w=>relative+": "+w));
             var evidence=extraction.Units.Select(u=>new Evidence(Json.Hash(versionId+u.Id),sourceId,relative,hash,u.Locator,u.Text,u.Parent)).DistinctBy(e=>e.Id).ToArray();
             foreach(var e in evidence)if(evidenceIds.Add(e.Id))k.Evidence.Add(e);
-            var units=evidence.Select(e=>new Unit(e.Id,$"{sourceId}/{relative} {e.Locator}",e.Excerpt)).ToArray();
+            var units=evidence.Select(e=>new Unit(e.Id,$"{sourceId}/{relative} {e.Locator}",e.Excerpt,config.BusinessMode?e.Parent:null)).ToArray();
             if(extraction.RepeatedHeaders!=null)
                 foreach(var (id,header) in extraction.RepeatedHeaders)headers[Json.Hash(versionId+id)]=header with{Scope=sourceId+"/"+relative+" "+header.Scope};
-            var technical=TechnicalExtraction.Read(bytes,Path.GetExtension(file).ToLowerInvariant(),sourceId,context,evidence);
+            var technical=TechnicalExtraction.Read(bytes,Path.GetExtension(file).ToLowerInvariant(),sourceId,context,evidence,config.BusinessMode);
             foreach(var item in technical.Objects)
                 if(objectPositions.TryGetValue(item.Id,out var index))k.Objects[index]=item with{EvidenceIds=k.Objects[index].EvidenceIds.Concat(item.EvidenceIds).Distinct().ToArray()};
                 else {objectPositions[item.Id]=k.Objects.Count;k.Objects.Add(item);}
@@ -107,11 +109,11 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
                 }
             }
             var analysisComplete=analyze;
-            ExplorationSummary? exploration=null;
+            ExplorationSummary? exploration=null;BusinessSummary? businessSummary=null;
             if(duplicate!=null&&!reanalyze&&!pending)
             {
                 analysisComplete=duplicate.Analyzed;
-                exploration=duplicate.Exploration;
+                exploration=duplicate.Exploration;businessSummary=duplicate.Business;
                 progress?.Invoke(fileLabel+" — contenu dupliqué, connaissances réutilisées");
                 foreach(var id in duplicate.ClaimIds)
                 {
@@ -122,6 +124,35 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
                     k.Claims[i]=old with{EvidenceIds=old.EvidenceIds.Concat(corresponding).Distinct().Order().ToArray(),Obsolete=false}; fileClaims.Add(id);
                 }
                 counts[Contribution.None]++; warnings.Add(relative+": duplicate content; not independent corroboration.");
+            }
+            else if(business)
+            {
+                var attached=extraction.Image||config.NativeDocuments&&Path.GetExtension(file).ToLowerInvariant() is ".xls" or ".xlsx" or ".drawio";
+                var original=attached?Path.Combine(workspace.Local,"inputs",Guid.NewGuid().ToString("N")+Path.GetExtension(file)):null;
+                if(original!=null)await File.WriteAllBytesAsync(original,bytes,ct);
+                try
+                {
+                    businessSummary=await new BusinessDocuments(workspace,(IBusinessAssistant)analyzer,progress).Run(sourceId,relative,key,Path.GetExtension(file).ToLowerInvariant(),units,extraction.Warnings.ToArray(),original,reanalyze,explorationBudget!,
+                        (read,plan,budget)=>Request(k,decisions,effectiveRole,read,Retrieval.Select(k,context.Description+" "+plan+" "+string.Join(" ",read.Select(u=>u.Text)),context:context),"business",context,budget),
+                        (analysis,links)=>
+                        {
+                            Accept(analysis);
+                            foreach(var link in links)
+                            {
+                                var from=analysis.Findings.First(f=>f.Entity==link.From);var to=analysis.Findings.First(f=>f.Entity==link.To);
+                                string Entity(Finding f)=>k.Entities.Single(e=>e.IdentityKey==Identity(k,f,context)).Id;
+                                var a=Entity(from);var b=Entity(to);var id=Json.Hash(a+link.Kind+b+versionId);
+                                k.Relations.RemoveAll(r=>r.Id==id);k.Relations.Add(new(id,a,b,link.Kind,link.EvidenceIds,KnowledgeOrigin.Inferred));
+                            }
+                        },ct);
+                    analysisComplete=businessSummary.Complete;
+                    foreach(var question in businessSummary.Questions)
+                    {
+                        var id=Json.Hash(versionId+question);if(!k.Questions.Any(q=>q.Id==id))k.Questions.Add(new(id,context.Project,question,[]));
+                    }
+                    if(!analysisComplete){extraction.Warnings.Add("Compréhension partielle : consulter analysis pour les sections non interprétées.");warnings.Add(relative+": compréhension partielle.");}
+                }
+                finally{if(original!=null)File.Delete(original);}
             }
             else if(analyze&&guided)
             {
@@ -187,7 +218,7 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
             }
             if(previous!=null) k.Sources[k.Sources.IndexOf(previous)]=previous with{Active=false};
             k.Sources.RemoveAll(s=>s.Id==versionId);
-            k.Sources.Add(new(versionId,sourceId,relative,hash,key,effectiveRole,evidence.Select(e=>e.Id).ToArray(),fileClaims.Order().ToArray(),true,extraction.Warnings.ToArray(),context,analysisComplete,exploration));
+            k.Sources.Add(new(versionId,sourceId,relative,hash,key,effectiveRole,evidence.Select(e=>e.Id).ToArray(),fileClaims.Order().ToArray(),true,extraction.Warnings.ToArray(),context,analysisComplete,exploration,businessSummary));
             var groupKey=descriptor with{Role=effectiveRole};
             if(analyze&&!guided)
             {
@@ -231,7 +262,7 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
             }
         RefreshObsolete(k);
         var unanalyzed=k.Sources.Count(s=>s.Active&&s.SourceId==sourceId&&seen.Contains(s.RelativePath)&&!s.Analyzed);
-        var report=new IngestionReport(Guid.NewGuid().ToString("N"),DateTimeOffset.UtcNow,sourceId,files.Count,unchanged,counts,warnings.ToArray(),changed.Distinct().Order().ToArray(),analyze?(guided?"guided":"analysis"):"index",unanalyzed);
+        var report=new IngestionReport(Guid.NewGuid().ToString("N"),DateTimeOffset.UtcNow,sourceId,files.Count,unchanged,counts,warnings.ToArray(),changed.Distinct().Order().ToArray(),business?"business":analyze?(guided?"guided":"analysis"):"index",unanalyzed);
         k.Reports.Add(report); ct.ThrowIfCancellationRequested();
         progress?.Invoke("Enregistrement des connaissances et du rapport");
         string publishedRevision;
@@ -255,7 +286,7 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
         var ids=existing.Select(c=>c.Id).ToHashSet();
         var request=new AnalysisRequest(role.ToString(),units,existing,k.Entities.Where(e=>existing.Any(c=>c.EntityId==e.Id)).ToArray(),decisions.Where(d=>ids.Contains(d.ClaimId)).TakeLast(20).Select(d=>d with{Reason=d.Reason[..Math.Min(d.Reason.Length,1000)]}).ToArray(),phase,context,k.Projects.SingleOrDefault(p=>p.Name.Equals(context?.Project,StringComparison.OrdinalIgnoreCase)));
         request=request with{HumanDeclarations=k.Questions.Where(q=>q.Project==context?.Project&&q.Answer!=null).TakeLast(5).Select(q=>q with{Answer=q.Answer![..Math.Min(500,q.Answer!.Length)]}).ToArray()};
-        if(request.Project is {} project)request=request with{Project=project with{Objective=project.Objective[..Math.Min(600,project.Objective.Length)],Architecture=project.Architecture[..Math.Min(600,project.Architecture.Length)],Conventions=project.Conventions.Take(5).Select(c=>c[..Math.Min(200,c.Length)]).ToArray(),Domains=project.Domains.Where(d=>d.Name==context?.Domain).Take(1).ToArray(),Glossary=project.Glossary.Where(g=>units.Any(u=>u.Text.Contains(g.Term,StringComparison.OrdinalIgnoreCase))).Take(3).ToArray(),Authorities=project.Authorities.Take(5).ToArray(),Systems=project.Systems.Take(5).ToArray()}};
+        if(request.Project is {} project)request=request with{Project=BusinessInterview.Compact(project) with{Objective=project.Objective[..Math.Min(600,project.Objective.Length)],Architecture=project.Architecture[..Math.Min(600,project.Architecture.Length)],Conventions=project.Conventions.Take(5).Select(c=>c[..Math.Min(200,c.Length)]).ToArray(),Domains=project.Domains.Where(d=>d.Name==context?.Domain).Take(1).ToArray(),Glossary=project.Glossary.Where(g=>units.Any(u=>u.Text.Contains(g.Term,StringComparison.OrdinalIgnoreCase))).Take(3).ToArray(),Authorities=project.Authorities.Take(5).ToArray(),Systems=project.Systems.Take(5).ToArray()}};
         while(Json.Serialize(request).Length>budget)
         {
             if(request.Existing.Length==0)throw new InvalidDataException("Unit metadata exceeds the analysis budget.");
@@ -279,14 +310,25 @@ public sealed class Ingestor(Workspace workspace,IAnalyzer analyzer,Action<strin
         if(!File.Exists(path))return null;
         var saved=Json.Read<Analysis>(File.ReadAllText(path));CopilotAnalyzer.Validate(saved,request);return saved;
     }
+    private static string Identity(Knowledge k,Finding finding,SourceContext context)
+    {
+        var source=k.Evidence.Single(e=>e.Id==finding.EvidenceIds[0]).SourceId;
+        if(!finding.Uncertain&&finding.Contribution is Contribution.Corroboration or Contribution.Complement)
+        {
+            var ids=k.Claims.Where(c=>finding.RelatedClaimIds.Contains(c.Id)).Select(c=>c.EntityId).Distinct().ToArray();
+            if(ids.Length==1&&k.Entities.Single(e=>e.Id==ids[0]) is {} known&&known.Name.Equals(finding.QualifiedName??finding.Entity,StringComparison.OrdinalIgnoreCase)&&known.Kind==finding.Kind&&known.Project==context.Project)return known.IdentityKey??known.Id;
+        }
+        return source+":"+context.Scope+":"+finding.Kind.ToLowerInvariant()+":"+(finding.QualifiedName??finding.Entity).Trim().ToLowerInvariant()+(finding.Role!=null&&finding.Kind is "table" or "endpoint" or "dto" or "method" or "component"?":"+finding.Role:"");
+    }
     private static Claim? Apply(Knowledge k,Finding finding,SourceRole role,Dictionary<Contribution,int> counts,SourceContext context)
     {
+        role=finding.Role??role;
         if(finding.Contribution==Contribution.None){counts[Contribution.None]++;return null;}
-        var source=k.Evidence.Single(e=>e.Id==finding.EvidenceIds[0]).SourceId;
-        var identity=source+":"+context.Scope+":"+finding.Kind.ToLowerInvariant()+":"+(finding.QualifiedName??finding.Entity).Trim().ToLowerInvariant();
+        var identity=Identity(k,finding,context);
         var entity=k.Entities.SingleOrDefault(e=>e.IdentityKey==identity);
         var entityId=entity?.Id??Json.Hash(identity);
-        if(entity==null)k.Entities.Add(new(entityId,finding.QualifiedName??finding.Entity,finding.Kind,context.Project,context.Domain,[],identity));
+        if(entity==null)k.Entities.Add(new(entityId,finding.QualifiedName??finding.Entity,finding.Kind,context.Project,context.Domain,finding.Aliases,identity));
+        else if(finding.Aliases.Length>0)k.Entities[k.Entities.IndexOf(entity)]=entity with{Aliases=(entity.Aliases??[]).Concat(finding.Aliases).Distinct().Take(24).ToArray()};
         var contribution=finding.Uncertain?Contribution.Hypothesis:finding.Contribution;
         var related=finding.RelatedClaimIds.Distinct().Order().ToArray();
         // A cross-role difference is an evolution proposal, not an automatic contradiction.

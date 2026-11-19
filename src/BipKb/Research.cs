@@ -50,7 +50,7 @@ public sealed class Research(Workspace workspace,IResearchAssistant assistant)
             var result=engine.Search(new(query,task.Project,Depth:Math.Clamp(settings.GraphDepth,0,3)));
             steps.Add(new(cycle+1,query,result.Hits.Select(h=>h.Id).ToArray(),result.Milliseconds));foreach(var hit in result.Hits)findings[hit.Id]=hit;
             var selected=findings.Values.OrderByDescending(h=>h.Score).Take(30).ToArray();
-            var request=new ResearchRequest(task.Goal,Compact(profile),selected,turns.TakeLast(6).Select(t=>t with{Text=t.Text[..Math.Min(t.Text.Length,1500)]}).ToArray(),Coverage(selected),cycle+1,workspace.Load().Questions.Where(q=>q.Project==task.Project&&q.Answer!=null).TakeLast(5).Select(q=>q with{Answer=q.Answer![..Math.Min(500,q.Answer!.Length)]}).ToArray());
+            var request=new ResearchRequest(task.Goal,Compact(profile,task.Goal),selected,turns.TakeLast(6).Select(t=>t with{Text=t.Text[..Math.Min(t.Text.Length,1500)]}).ToArray(),Coverage(selected),cycle+1,workspace.Load().Questions.Where(q=>q.Project==task.Project&&q.Answer!=null).TakeLast(5).Select(q=>q with{Answer=q.Answer![..Math.Min(500,q.Answer!.Length)]}).ToArray());
             var budget=Math.Clamp(settings.ResearchBudget,6000,18000);
             while(Json.Serialize(request).Length>budget&&request.Findings.Length>0)request=request with{Findings=request.Findings[..^1]};
             if(Json.Serialize(request).Length>budget)throw new InvalidOperationException("Project and conversation exceed research budget; start a more focused task.");
@@ -74,7 +74,19 @@ public sealed class Research(Workspace workspace,IResearchAssistant assistant)
         }
         workspace.Save(k);return final;
     }
-    public static ProjectProfile Compact(ProjectProfile p)=>p with{Objective=p.Objective[..Math.Min(600,p.Objective.Length)],Architecture=p.Architecture[..Math.Min(600,p.Architecture.Length)],Conventions=p.Conventions.Take(5).Select(c=>c[..Math.Min(c.Length,200)]).ToArray(),Glossary=p.Glossary.Take(5).ToArray(),Domains=p.Domains.Take(5).ToArray(),Authorities=p.Authorities.Take(5).ToArray(),Systems=p.Systems.Take(5).ToArray()};
+    public static ProjectProfile Compact(ProjectProfile p,string? goal=null)
+    {
+        var compact=BusinessInterview.Compact(p) with{Objective=p.Objective[..Math.Min(600,p.Objective.Length)],Architecture=p.Architecture[..Math.Min(600,p.Architecture.Length)],Conventions=p.Conventions.Take(5).Select(c=>c[..Math.Min(c.Length,200)]).ToArray(),Glossary=p.Glossary.Take(5).ToArray(),Domains=p.Domains.Take(5).ToArray(),Authorities=p.Authorities.Take(5).ToArray(),Systems=p.Systems.Take(5).ToArray()};
+        if(compact.Brief is {} brief)
+        {
+            var terms=SearchEngine.Terms(goal??"");
+            string Clip(string text,int max)=>text.Length<=max?text:text[..max]+" [extrait ; cadrage complet via project]";
+            var items=brief.Content.Items.OrderByDescending(i=>terms.Count(t=>SearchEngine.Normalize(i.Text).Contains(t))+(i.Topic is "constraint" or "decision"?1:0)).Take(6)
+                .Select(i=>i with{Text=Clip(i.Text,350),TurnIds=[]}).ToArray();
+            compact=compact with{Brief=brief with{Content=brief.Content with{Objective=Clip(brief.Content.Objective,600),Scope=Clip(brief.Content.Scope,600),Items=items,OpenQuestions=brief.Content.OpenQuestions.Take(3).Select(q=>Clip(q,200)).ToArray()}}};
+        }
+        return compact;
+    }
     public static void Validate(ResearchAdvice advice,ResearchRequest request)
     {
         if(string.IsNullOrWhiteSpace(advice.Answer)||advice.Answer.Length>16000||advice.Citations==null||advice.NextQueries==null||advice.Questions==null||advice.NextQueries.Length>3||advice.Questions.Length>5||advice.NextQueries.Concat(advice.Questions).Any(x=>string.IsNullOrWhiteSpace(x)||x.Length>1000))throw new InvalidDataException("Invalid research response.");
