@@ -1,10 +1,14 @@
-# Refonte : Copilot organise la connaissance avant l'indexation métier
+# Refonte : compréhension métier par Copilot et recherche sourcée
 
 **Statut : proposition de refonte issue de la revue du 19 novembre 2026. Ce document décrit la cible ; ces nouvelles capacités ne sont pas encore implémentées.** Revue du code au commit `ebbff27` (0.4.7). Les mesures précédentes sur des identifiants synthétiques ne valident pas la rapidité d'une recherche métier réelle.
 
-Le besoin confirmé est double : les appels MCP prennent trop de temps et Copilot doit multiplier les recherches pour obtenir une réponse utile. La cible est une base préparée pour comprendre les développements et migrations : le rôle de Copilot à l'ingestion doit inclure l'organisation des connaissances fonctionnelles, leur vocabulaire et leurs relations.
+Le besoin confirmé est double : les appels MCP prennent trop de temps et Copilot doit multiplier les recherches pour obtenir une réponse utile. La cible est un business analyste doté d'une mémoire vérifiable : comprendre l'activité, l'existant, la transformation souhaitée et les décisions. Le code constitue une source d'observation parmi d'autres ; la préparation d'un développement est un usage de la connaissance métier.
+
+**Cadrage complémentaire confirmé : un seul projet par workspace, entretien initial piloté par Copilot et départ sur un workspace neuf.** La [conception du workspace et du rôle de business analyste](business-analyst-workspace.md) précise ce parcours, le contrat d'échange et la mémoire du projet. Les données et paramétrages des essais précédents n'ont pas à être repris ; une migration de ces espaces n'est plus un livrable de cette refonte.
 
 ## 1. Ce qui doit changer
+
+Avant l'analyse des documents, Copilot construit avec l'utilisateur un cadrage initial suffisant : objectif, périmètre, activité concernée, informations disponibles et inconnues. Les applications legacy/cible appartiennent au même projet. Les domaines et le rôle des sources peuvent être précisés progressivement, sans imposer un formulaire technique préalable. Ce cadrage évolue avec les sources et les arbitrages humains ; il oriente l'ingestion et les réponses futures.
 
 La mise à disposition du document doit précéder les décisions de découpage métier. Copilot commence par comprendre le document et choisit ensuite les sections cohérentes à analyser et les connaissances à conserver. bip-kb fournit des moyens fiables de consulter le document, conserve ses preuves et indexe les résultats validés.
 
@@ -65,7 +69,7 @@ Chaque connaissance conserve son projet, son rôle, son statut, sa version sourc
 
 Copilot peut rechercher les concepts et artefacts existants pendant l'analyse. Il propose de réutiliser une identité connue, d'ajouter une connaissance, d'apporter un complément, de signaler une contradiction ou une évolution.
 
-Une identité fonctionnelle peut être commune à plusieurs sources d'un même projet. Les artefacts legacy et cible restent distincts, même s'ils implémentent le même concept. Les homonymes, les projets différents et les identités incertaines ne sont pas fusionnés par leur seul nom. Les décisions humaines restent prioritaires ; les nouvelles preuves peuvent ouvrir un réexamen explicite.
+Une identité fonctionnelle peut être commune à plusieurs sources du projet. Les artefacts legacy et cible restent distincts, même s'ils implémentent le même concept. Les homonymes et les identités incertaines ne sont pas fusionnés par leur seul nom. Un autre projet relève d'un autre workspace. Les décisions humaines restent prioritaires ; les nouvelles preuves peuvent ouvrir un réexamen explicite.
 
 ### E. Valider puis publier
 
@@ -96,14 +100,14 @@ Conserver trois niveaux distincts :
 | Niveau | Contenu | Usage principal |
 |---|---|---|
 | Sources et preuves | Instantanés locaux, extraits, coordonnées, versions, positions de code | Vérifier une affirmation ou explorer un détail |
-| Connaissances | Fiches fonctionnelles, règles, processus, décisions, correspondances, synthèses | Répondre directement aux demandes de développement |
+| Connaissances | Fiches fonctionnelles, règles, processus, décisions, correspondances, synthèses | Expliquer le métier, comparer existant/cible et éclairer les décisions |
 | Graphe | Concepts et artefacts identifiés, relations typées avec preuves et statut | Suivre les dépendances et le passage ancien → cible |
 
 La recherche métier privilégie les fiches, alias et correspondances puis ajoute un voisinage ciblé du graphe. Une recherche technique exacte garde l'accès direct à un symbole, une table ou une preuve. Les extraits bruts restent un recours explicite quand la connaissance organisée ne suffit pas ; ils ne doivent pas monopoliser les résultats par simple répétition de mots.
 
 Copilot enrichit à l'ingestion le vocabulaire fonctionnel, les synonymes et les questions de recherche possibles. Ces métadonnées restent distinctes des preuves et évaluées pour éviter d'introduire de faux rapprochements. Cela ne rend pas une recherche lexicale universellement sémantique : le rappel sur des reformulations réellement nouvelles doit être mesuré. Des embeddings pourront être évalués ensuite si nécessaire, sans faire dépendre la première livraison d'un autre service de modèle.
 
-Le MCP doit pouvoir renvoyer un dossier utile en un appel : fiches pertinentes, éléments cible, correspondances legacy, règles, implémentations, liens prioritaires, preuves et questions ouvertes. Des appels complémentaires servent à vérifier les détails. Le serveur ne lance pas un nouveau Copilot à chaque requête : le Copilot de l'IDE raisonne à partir des connaissances déjà préparées.
+Le MCP doit pouvoir renvoyer un dossier utile en un appel : cadrage pertinent, acteurs et processus, règles et exceptions, décisions, correspondances existant/cible, preuves et questions ouvertes. Les implémentations sont ajoutées lorsqu'elles éclairent le besoin. Des appels complémentaires servent à vérifier les détails. Le serveur ne lance pas un nouveau Copilot à chaque requête : le Copilot connecté au MCP raisonne à partir des connaissances déjà préparées.
 
 La lecture reste SQLite. Les parcours et filtres utilisent des index dédiés ; les contrôles d'autorité sont groupés et les grands ensembles de preuves ne sont pas parcourus systématiquement. Les réponses ont un budget explicite et des continuations quand nécessaire.
 
@@ -127,7 +131,7 @@ Chaque relation : preuve précise, version, rôle, statut
 Points manquants : droits non documentés, correspondance non confirmée…
 ```
 
-À la question « quels DTO, query et handler pour consulter un contrat ? », le dossier retrouve ces liens déjà préparés. Il distingue les usages de code observés des suggestions et ne déduit aucun détail interne d'un package NuGet à partir de son nom.
+À la question « qui peut consulter un contrat, dans quelles conditions, et qu'est-ce qui change dans la cible ? », le dossier retrouve les acteurs, règles, exceptions et changements connus avec leurs preuves. Il peut ensuite servir à préparer un développement. Dans ce cas, il distingue les usages de code observés des suggestions et ne déduit aucun détail interne d'un package NuGet à partir de son nom.
 
 ## 8. Autres formats
 
@@ -136,23 +140,23 @@ Points manquants : droits non documentés, correspondance non confirmée…
 - **SQL et C#** : conserver les parseurs pour les symboles, positions et dépendances observables. Copilot choisit les ensembles à comprendre et ajoute la lecture métier. Les références de symboles non résolues restent signalées.
 - **Dossiers volumineux** : inventaire local rapide, carte des composants puis priorisation par Copilot selon l'objectif. Ne pas remplacer la boucle actuelle par un appel de modèle pour chacun des milliers de fichiers.
 
-## 9. Livraison et migration
+## 9. Livraison sur un workspace neuf
 
 | Étape | Livrable vérifiable |
 |---|---|
 | 1. Mesurer et valider les capacités | Temps par outil MCP et par étape SQL, nombre d'appels pour une question métier ; vrai test XLSX et reprise de session sur le couple CLI/modèle utilisé. |
-| 2. Parcours Excel complet | Instantané consultable, compréhension globale, plan choisi par Copilot, fiches et relations sourcées, reprise après interruption. |
-| 3. Recherche métier | Index des fiches et alias, relations précises, dossier MCP direct ; comparaison avec les questions de référence. |
-| 4. Rapprochement entre sources | Réutilisation des concepts, conservation des artefacts distincts, conflits et décisions persistants ; actualisation incrémentale. |
-| 5. Formats et migration | Images/Draw.io puis dossiers de code ; projection des anciennes données, coexistence et retrait progressif du mode guidé actuel. |
+| 2. Premier parcours de business analyste | Workspace avec un projet, entretien reprenable, cadrage confirmé ; un Excel consultable, compris et organisé en fiches et relations sourcées ; premier dossier MCP utile. |
+| 3. Recherche métier et volumétrie | Index des fiches et alias, relations précises, réponses aux questions de référence ; latence et nombre d'appels mesurés sur un corpus documenté. |
+| 4. Rapprochement entre sources | SQL/code et autres documents pour confronter les comportements et propositions ; concepts réutilisés, conflits, décisions et révisions du cadrage persistants. |
+| 5. Couverture des formats | Images/Draw.io puis dossiers volumineux ; qualification contextuelle des sources, limites de couverture et reprise vérifiées. |
 
-La migration conserve les preuves et décisions existantes. Les anciens résultats ne deviennent pas rétroactivement de nouvelles fiches validées. Une nouvelle analyse est nécessaire pour obtenir une compréhension qui n'a jamais été enregistrée ; elle doit pouvoir cibler les sources utiles et réutiliser leurs preuves, sans forcer la réanalyse du dépôt entier. Les anciens résultats restent consultables tant que leur remplacement n'a pas été publié.
+Le premier parcours repart d'un espace neuf et d'un nouveau cadrage. Aucune reprise automatique des anciennes ingestions, décisions ou configurations de test n'est nécessaire ; aucun ancien espace n'est supprimé ou converti silencieusement. Cela permet de simplifier le modèle sans investir dans une migration non demandée. Les garanties de reprise, de provenance et de publication atomique restent nécessaires dans le nouveau format.
 
 La cible ajoute un modèle de fiches et de relations plus expressif ; elle ne doit pas être présentée comme un simple changement de prompt. Le mode d'indexation locale rapide reste disponible pour les sources où une analyse de modèle n'apporte pas de valeur immédiate.
 
 ## 10. Critères de réussite
 
-Évaluer au moins dix questions métier représentatives avec leurs preuves attendues : endpoint à construire, mapping legacy/cible, règle de statut, procédure appelée, exception, droits manquants, décision remplacée, contradiction, usages NuGet observés et question sans réponse. Garder des formulations de test qui n'ont pas été fournies au modèle pendant l'indexation.
+Évaluer au moins dix questions métier représentatives avec leurs preuves attendues : objectif et périmètre, acteur et responsabilité, parcours nominal, règle de statut, exception, droits manquants, différence existant/cible, décision remplacée, contradiction et question sans réponse. Ajouter des questions de traçabilité technique lorsque cela correspond au projet. Garder des formulations de test qui n'ont pas été fournies au modèle pendant l'indexation.
 
 Mesurer séparément :
 
@@ -161,5 +165,6 @@ Mesurer séparément :
 - **Qualité de connaissance** : citations réellement probantes, conditions et exceptions conservées, distinction ancien/cible/hypothèse, absence de fusion d'homonymes et de contradiction masquée.
 - **Coût d'ingestion** : durée, appels CLI, volume transmis et travail réutilisé lors d'une modification. Ne pas confondre un appel CLI avec une unique requête de modèle.
 - **Fiabilité** : reprise, invalidation des seules connaissances dépendantes, aucune révision incomplète activée, décisions humaines conservées.
+- **Qualité du cadrage** : reformulations fidèles, distinctions entre déclaration/observation/interprétation/décision, effort de saisie, questions redondantes et corrections nécessaires ; une inconnue non bloquante ne doit pas empêcher de démarrer.
 
-Un temps correct sur une recherche d'identifiant synthétique ou un modèle simulé ne suffit pas à accepter la refonte. Le premier jalon métier doit passer avec un vrai Copilot sur un classeur représentatif et des questions de développement avant de généraliser le nouveau parcours.
+Un temps correct sur une recherche d'identifiant synthétique ou un modèle simulé ne suffit pas à accepter la refonte. Le premier jalon métier doit passer avec un vrai Copilot, un cadrage neuf, un classeur représentatif et des questions sur l'activité et sa transformation avant de généraliser le nouveau parcours.

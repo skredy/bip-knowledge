@@ -2,7 +2,7 @@
 
 Assistant local de connaissance technique : ingestion de documents et de code, mémoire sourcée, recherche, enquêtes avec Copilot CLI et dossiers de travail persistants. .NET 10, SQLite FTS5, Razor Pages, partage par Git et MCP en lecture seule.
 
-La [proposition de refonte de l'analyse et de la recherche](docs/knowledge-redesign.md) décrit une compréhension globale des documents pilotée par Copilot avant l'indexation métier. Elle distingue les capacités envisagées du fonctionnement actuel décrit ci-dessous.
+La cible de la refonte est un **business analyste avec une mémoire sourcée**, avec [un projet par workspace et un cadrage conversationnel par Copilot](docs/business-analyst-workspace.md), puis une [compréhension globale des documents avant l'indexation métier](docs/knowledge-redesign.md). Elle prévoit un départ sur un workspace neuf, sans reprise nécessaire des essais précédents. Ces documents sont des propositions de conception ; le fonctionnement actuel reste décrit ci-dessous.
 
 **Version 0.4.7.** Les tests automatisés contrôlent les mécanismes ; la compréhension métier et l'intégration Copilot doivent être vérifiées avec votre corpus et votre compte professionnel. Voir [validation](docs/validation.md).
 
