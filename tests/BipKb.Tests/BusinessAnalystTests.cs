@@ -115,6 +115,23 @@ public class BusinessAnalystTests
         var descriptor=s.Workspace.Config.Sources.Single().Resolve("new.md")!;Assert.Equal(SourceRole.Current,descriptor.Role);Assert.Equal("iBip",descriptor.Context.Project); // Explicit source binding takes precedence over a model guess.
         await setup.Prepare(file,null,null,null,false,true,default);Assert.Equal(1,model.QualificationCalls);
     }
+    [Theory]
+    [InlineData("\r\n   \r\nNouvelle description\r\n", "Nouvelle description")]
+    [InlineData("/keep\r\n", "Règles et implémentation des commandes")]
+    [InlineData("/skip\r\n", "")]
+    public async Task DescribeWaitsForExplicitInputBeforeSaving(string lines, string expected)
+    {
+        using var sandbox = new Sandbox();
+        var model = new BusinessDouble();
+        await Frame(sandbox, model);
+        var file = sandbox.File("rules.md", "Contrats");
+        var setup = new BusinessSourceSetup(sandbox.Workspace, model, new StringReader(lines), TextWriter.Null, true);
+        await setup.Prepare(file, null, null, null, describe: true, analyze: false, default);
+        var draft = Directory.GetFiles(Path.Combine(sandbox.Workspace.Local, "business", "source-notes")).Single();
+        Assert.Equal(expected, Json.Read<string>(File.ReadAllText(draft)));
+        Assert.Equal(0, model.QualificationCalls);
+    }
+
     [Fact]
     public async Task LargeDocumentUsesModelChosenReadingsAndResumesWithEarlierCitations()
     {

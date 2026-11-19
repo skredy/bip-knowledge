@@ -52,7 +52,7 @@ Dans un nouveau workspace :
 
 Le choix porte sur l'entrée : un dossier contenant des Excel reste indexé localement par défaut. Analysez ensuite les documents importants explicitement. `--analyze` sur un gros dossier analyse ses fichiers successivement et peut rester coûteux ; la priorisation automatique par composants n'est pas encore implémentée.
 
-Lors du premier ajout, une description libre est proposée : « À quoi sert cette source pour votre projet ? ». Entrée laisse le rôle à déterminer. Copilot reçoit le cadrage, l'inventaire et un aperçu limité pour proposer le rôle ; cela ne constitue pas une analyse complète. Une ambiguïté importante peut entraîner une question supplémentaire. Vous pouvez laisser cette question ouverte.
+Lors du premier ajout, une description libre est proposée : « À quoi sert cette source pour votre projet ? ». Depuis la 0.5.1, une ligne vide laisse la question ouverte. Tapez `/skip` pour passer ou `/pause` pour arrêter. Avec `--describe`, saisissez la nouvelle description ou tapez `/keep` pour conserver celle affichée. Copilot reçoit le cadrage, l'inventaire et un aperçu limité pour proposer le rôle ; cela ne constitue pas une analyse complète. Une ambiguïté importante peut entraîner une question supplémentaire. Vous pouvez laisser cette question ouverte.
 
 Le projet est repris automatiquement, les identifiants de source sont proposés et les sujets métier n'exigent pas de saisie manuelle. Un document mixte peut garder un rôle global inconnu ; ses assertions distinguent ensuite `legacy`, `target`, `current` ou `unknown`. Aucune qualification du modèle ne déclare une source approuvée.
 

@@ -10,7 +10,7 @@ public static class Cli
     public static async Task<int> Run(string[] args)
     {
         if(args.Length==1 && args[0] is "--help" or "-h")args=["help"];
-        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.5.0");return 0;}
+        if(args.Length==1 && args[0]=="--version"){Console.WriteLine("bip-kb 0.5.1");return 0;}
         using var cancel=new CancellationTokenSource();
         Console.CancelKeyPress+=(_,e)=>{e.Cancel=true;cancel.Cancel();};
         try
@@ -146,9 +146,9 @@ All commands: --workspace <directory>, --json. Quote multiword arguments.
                             var interactive=!Console.IsInputRedirected&&!parsed.Has("non-interactive")&&!parsed.Has("json");
                             var setupOutput=parsed.Has("json")?TextWriter.Null:Console.Error;
                             if(businessWorkspace&&parsed.Has("context-file"))throw new ArgumentException("Le cadrage est réutilisé automatiquement ; utilisez --message pour préciser le rôle de cette source.");
-                            progress.Report("Préparation et qualification de la source");
+                            // Start progress only when inventory begins. Keep the input prompt quiet.
                             var source=businessWorkspace
-                                ?await new BusinessSourceSetup(workspace,analyzer,Console.In,setupOutput,interactive).Prepare(input,parsed.Get("source"),role,parsed.Get("message"),parsed.Has("describe"),analyze,cancel.Token)
+                                ?await new BusinessSourceSetup(workspace,analyzer,Console.In,setupOutput,interactive,progress.Report).Prepare(input,parsed.Get("source"),role,parsed.Get("message"),parsed.Has("describe"),analyze,cancel.Token)
                                 :await new SourceSetup(workspace,Console.In,setupOutput,interactive).Prepare(input,parsed.Get("source"),role,parsed.Get("context-file"),parsed.Has("describe"),cancel.Token,analyze);
                             result=await new Ingestor(workspace,analyzer,progress.Report).Run(input,source,null,parsed.Has("reanalyze"),cancel.Token,analyze,analysisMode=="guided",maxCalls);
                         }

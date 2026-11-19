@@ -10,6 +10,45 @@ import tempfile
 import time
 
 
+def verify_source_prompt(command, kb, book, package):
+    """Exercise the interactive prompt on a real PTY, including one heartbeat interval."""
+    import pty
+    import select
+
+    master, slave = pty.openpty()
+    proc = subprocess.Popen(command + ['--ingest', str(book), '--workspace', str(kb)],
+                            stdin=slave, stdout=slave, stderr=slave)
+    os.close(slave)
+    try:
+        transcript = b''
+        deadline = time.monotonic() + 15
+        while b'> ' not in transcript:
+            assert time.monotonic() < deadline and proc.poll() is None, transcript
+            if select.select([master], [], [], 0.2)[0]:
+                transcript += os.read(master, 4096)
+        assert 'À quoi sert cette source'.encode() in transcript, transcript
+        calls = (package / 'business-calls.jsonl').read_bytes()
+        # A slow typist should see a stationary prompt. A stray Enter must not commit it.
+        assert not select.select([master], [], [], 11)[0], 'Progress interrupted the source prompt'
+        os.write(master, b'\n')
+        repeated = b''
+        deadline = time.monotonic() + 5
+        while b'> ' not in repeated:
+            assert time.monotonic() < deadline and proc.poll() is None, repeated
+            if select.select([master], [], [], 0.2)[0]:
+                repeated += os.read(master, 4096)
+        assert (package / 'business-calls.jsonl').read_bytes() == calls
+        note = 'Étude des droits de consultation'
+        os.write(master, (note + '\n').encode())
+        assert proc.wait(timeout=30) == 0
+        assert note in [json.loads(p.read_text(encoding='utf-8')) for p in (kb / '.local/business/source-notes').glob('*.json')]
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+        os.close(master)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--tool')
@@ -51,7 +90,11 @@ def main():
         assert profile['brief']['declarations'][0]['text'].endswith('é 漢字 👋')
         book = root / 'Étude.xlsx'
         shutil.copy(repo / 'tests/BipKb.Tests/Fixtures/study.xlsx', book)
-        report = run('--ingest', book, '--message', 'Étude des contrats, comportant des propositions cible')
+        if os.name == 'posix':
+            verify_source_prompt(command, kb, book, package)
+            report = run('--ingest', book)
+        else:
+            report = run('--ingest', book, '--message', 'Étude des contrats, comportant des propositions cible')
         assert report['mode'] == 'business' and report['unanalyzedFiles'] == 0
         calls = (package / 'business-calls.jsonl').read_text()
         assert run('--ingest', book)['unchanged'] == 1

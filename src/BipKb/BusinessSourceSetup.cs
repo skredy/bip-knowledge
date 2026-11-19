@@ -1,6 +1,6 @@
 namespace BipKb;
 
-public sealed class BusinessSourceSetup(Workspace workspace,IBusinessAssistant assistant,TextReader input,TextWriter output,bool interactive)
+public sealed class BusinessSourceSetup(Workspace workspace,IBusinessAssistant assistant,TextReader input,TextWriter output,bool interactive,Action<string>? progress=null)
 {
     public static void Validate(SourceQualification q)
     {
@@ -31,13 +31,11 @@ public sealed class BusinessSourceSetup(Workspace workspace,IBusinessAssistant a
         }
         var draftPath=Path.Combine(workspace.Local,"business","source-notes",Json.Hash(path)+".json");
         var notes=description??(File.Exists(draftPath)?Json.Read<string>(File.ReadAllText(draftPath)):existing?.Context.Description??"");
-        if(notes.Length==0&&interactive)
-        {
-            output.WriteLine("À quoi sert cette source pour votre projet ? Entrée laisse le rôle à déterminer ; /pause pour arrêter.");output.Write("> ");output.Flush();
-            notes=input.ReadLine()??throw new OperationCanceledException();if(notes=="/pause")throw new OperationCanceledException();
-        }
+        if(interactive && description == null && (describe || string.IsNullOrWhiteSpace(notes)))
+            notes = ReadPurpose(notes, ct);
         if(notes.Length>4000)throw new ArgumentException("Description limitée à 4000 caractères.");
         Json.Write(draftPath,notes);
+        progress?.Invoke("Inventaire de la source");
         var files=await Extractor.Inventory(path,root,config,ct);
         SourceQualification qualification;
         if(analyze)
@@ -57,6 +55,7 @@ public sealed class BusinessSourceSetup(Workspace workspace,IBusinessAssistant a
             qualification=await assistant.Qualify(new(BusinessInterview.Compact(profile),Path.GetFileName(path),inventory.ToArray(),notes),ct);Validate(qualification);
             if(qualification.Question.Length>0&&interactive)
             {
+                progress?.Invoke("");
                 output.WriteLine(qualification.Question+" (Entrée : laisser à éclaircir)");output.Write("> ");output.Flush();
                 var answer=input.ReadLine()??throw new OperationCanceledException();if(answer=="/pause")throw new OperationCanceledException();
                 if(answer.Length>1500)throw new ArgumentException("Précision limitée à 1500 caractères.");
@@ -76,5 +75,29 @@ public sealed class BusinessSourceSetup(Workspace workspace,IBusinessAssistant a
         var effectiveRole=role??(boundRole is not null and not SourceRole.Unknown?boundRole.Value:qualification.Role);
         workspace.ConfigureSource(sourceId,root,path,new(effectiveRole,context));
         return sourceId;
+    }
+
+    private string ReadPurpose(string saved, CancellationToken ct)
+    {
+        output.WriteLine("À quoi sert cette source pour votre projet ?");
+        if (!string.IsNullOrWhiteSpace(saved))
+            output.WriteLine($"Description enregistrée : {saved}\n/keep pour la conserver.");
+        output.WriteLine("Saisissez une description, /skip pour passer ou /pause pour arrêter.");
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            output.Write("> ");
+            output.Flush();
+            var answer = input.ReadLine()?.Trim();
+            if (answer is null or "/pause")
+                throw new OperationCanceledException();
+            if (answer == "/skip")
+                return "";
+            if (answer == "/keep" && !string.IsNullOrWhiteSpace(saved))
+                return saved;
+            if (!string.IsNullOrEmpty(answer) && answer != "/keep" && answer.Length <= 4000)
+                return answer;
+            output.WriteLine("Saisissez de 1 à 4000 caractères ou tapez /skip pour passer.");
+        }
     }
 }
